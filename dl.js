@@ -1,3 +1,5 @@
+"use strict";
+
 const { Readable } = require('stream');
 var log = require("loglevel");
 log.setLevel(0);
@@ -10,6 +12,37 @@ var https = require("https");
 var consts = {
 	SAVE_EXT: { "MP3": "mp3", "AAC": "aac", "AAC+": "aac", "OGG": "ogg", "HLS": "aac" },
 	API_PATH: "http://www.radio-browser.info/webservice/json/stations/bynameexact/"
+}
+
+var getRadioMetadata = function(country, name, callback) {
+	get(consts.API_PATH + encodeURIComponent(name), function(err, result) { //, corsEnabled
+		if (err || !result) {
+			return callback(err, null);
+		}
+
+		try {
+			var results = JSON.parse(result);
+		} catch(e) {
+			return callback(e.message, null);
+		}
+
+		for (var i=0; i<results.length; i++) {
+			if (results[i].country == country) {
+				log.info("getRadioMetadata: radio found: " + JSON.stringify(results[i]));
+
+				if (!isNaN(results[i].bitrate) && results[i].bitrate > 0) {
+					results[i].bitrate = results[i].bitrate * 1000 / 8; // result in kbps
+				} else {
+					results[i].bitrate = 128000 / 8; // * SEG_DURATION;
+					log.warn("getRadioMetadata: default bitrate to 128k");
+				}
+
+				return callback(null, results[i]);
+			}
+		}
+		log.error("getRadioMetadata: radio not found: " + results);
+		return callback(null, null);
+	});
 }
 
 class StreamDl extends Readable {
@@ -27,7 +60,7 @@ class StreamDl extends Readable {
 		this.segDuration = options.segDuration;
 
 		var self = this;
-		this.getRadioMetadata(this.country, this.name, function(err, result) {
+		getRadioMetadata(this.country, this.name, function(err, result) {
 			if (err || !result) {
 				log.warn(self.canonical + " problem fetching radio info: " + err);
 				return self.emit("error", "problem fetching radio info: " + err);
@@ -36,39 +69,9 @@ class StreamDl extends Readable {
 			self.origUrl = result.url;
 			self.codec = result.codec;
 			self.bitrate = result.bitrate;
-			self.emit("metadata", {	url: self.url, codec: self.codec, ext: consts.SAVE_EXT[self.codec], bitrate: self.bitrate });
+			self.favicon = result.favicon;
+			self.emit("metadata", {	url: self.url, favicon: self.favicon, codec: self.codec, ext: consts.SAVE_EXT[self.codec], bitrate: self.bitrate });
 			self.startDl();
-		});
-	}
-
-	getRadioMetadata(country, name, callback) {
-		get(consts.API_PATH + encodeURIComponent(name), function(err, result) { //, corsEnabled
-			if (err || !result) {
-				return callback(err, null);
-			}
-
-			try {
-				var results = JSON.parse(result);
-			} catch(e) {
-				return callback(e.message, null);
-			}
-
-			for (var i=0; i<results.length; i++) {
-				if (results[i].country == country) {
-					log.info("getRadioMetadata: radio found: " + JSON.stringify(results[i]));
-
-					if (!isNaN(results[i].bitrate) && results[i].bitrate > 0) {
-						results[i].bitrate = results[i].bitrate * 1000 / 8; // result in kbps
-					} else {
-						results[i].bitrate = 128000 / 8; // * SEG_DURATION;
-						log.warn("getRadioMetadata: default bitrate to 128k");
-					}
-
-					return callback(null, results[i]);
-				}
-			}
-			log.error("getRadioMetadata: radio not found: " + results);
-			return callback(null, null);
 		});
 	}
 
@@ -213,7 +216,7 @@ class StreamDl extends Readable {
 					log.error(self.canonical + ' problem with request: ' + e.message);
 					(function(timestamp) {
 						setTimeout(function() {
-							self.getRadioMetadata(self.country, self.name, function(err, result) {
+							getRadioMetadata(self.country, self.name, function(err, result) {
 								if (err) {
 									log.warn(self.canonical + " problem fetching radio info: " + err);
 								}
@@ -291,4 +294,5 @@ class StreamDl extends Readable {
 	}
 }
 
-module.exports = StreamDl;
+exports.StreamDl = StreamDl;
+exports.getRadioMetadata = getRadioMetadata;
