@@ -4,7 +4,9 @@
   "description": "Radio stream downloader",
   "main": "dl.js",
   "dependencies": {
-    "loglevel": "^1.6.0",
+    "chalk": "^2.3.0",
+    "loglevel": "^1.6.1",
+    "loglevel-plugin-prefix": "^0.8.3",
     "m3u8": "^0.0.7"
   },
   "devDependencies": {},

@@ -1,8 +1,7 @@
 "use strict";
 
 const { Readable } = require('stream');
-var log = require("loglevel");
-log.setLevel(0);
+var log = require("./log.js")("dl");
 var url = require("url");
 var m3u8handler = require("./m3u8handler.js");
 var get = require("./get.js");

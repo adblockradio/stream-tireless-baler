@@ -1,5 +1,4 @@
-var log = require("loglevel"); //("mls/m3u8handler", true);
-log.setLevel(0);
+var log = require("./log.js")("dl/m3u8handler");
 var m3u8 = require("m3u8");
 //var m3u8stream = require("m3u8stream"); // that was buggy when tested
 var http = require("http");
@@ -158,7 +157,7 @@ var parseMaster = function(masterUrl, callback) {
 		}
 		log.info("selected stream is #" + iTargetBandwidth + " at " + selectedBandwidth + "bps and uri=" + selectedUri);
 		if (selectedUri.indexOf("://") < 0) {
-			console.log("masterUrl=" + url.format(masterUrl));
+			log.debug("masterUrl=" + url.format(masterUrl));
 			var mstSplit = url.format(masterUrl).split("/");
 			mstSplit[mstSplit.length-1] = selectedUri;
 			log.info("uri " + selectedUri + " completed with path is " + mstSplit.join("/"));
