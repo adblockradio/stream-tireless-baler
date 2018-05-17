@@ -16,6 +16,5 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Alexandre Storelli <a_npm@storelli.fr>",
-  "private": true,
   "license": "AGPL-3.0"
 }
