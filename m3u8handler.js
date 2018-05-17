@@ -1,11 +1,15 @@
-var log = require("./log.js")("dl/m3u8handler");
-var m3u8 = require("m3u8");
+// Copyright (c) 2018 Alexandre Storelli
+// This file is licensed under the Affero General Public License version 3 or later.
+// See the LICENSE file.
+
+const { log } = require("abr-log")("dl/m3u8handler");
+const m3u8 = require("m3u8");
 //var m3u8stream = require("m3u8stream"); // that was buggy when tested
-var http = require("http");
-var https = require("https");
-var url = require("url");
-var fs = require("fs");
-var cp = require('child_process');
+const http = require("http");
+const https = require("https");
+const url = require("url");
+const fs = require("fs");
+const cp = require('child_process');
 
 var timeStamp = null;
 const EMIT_INTERVAL = 2;
@@ -19,7 +23,9 @@ var parseIntParameter = function(data, name) {
 var remainingData = null;
 var incrementalTimeoutHandle = null;
 
+// this function will return small chunks of data at regular intervals, not to clog the system behind
 var incrementalEmitter = function(size, delay, origin, emitter) {
+	if (timeStamp == "stop") return log.debug("incremental emit aborted");
 	//log.debug("incrementalEmitter: send " + size + " bytes to analyser " + origin.segment + ":" + origin.substep);
 	emitter(remainingData.slice(0, size), delay);
 	remainingData = remainingData.slice(size);
@@ -27,12 +33,15 @@ var incrementalEmitter = function(size, delay, origin, emitter) {
 	origin.substep += 1;
 	incrementalTimeoutHandle = setTimeout(function() {
 		incrementalEmitter(size, delay, origin, emitter);
-	}, EMIT_INTERVAL * 1000); //delay * 1000 / DELAY_FRACTION);
+	}, EMIT_INTERVAL * 1000);
 }
 
+// parses the m3u8 child playlist, that contains the list of audio files that changes over time.
 var parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback) {
-	//console.log("get playlist given last segment=" + lastSegment);
+	//log.debug("get playlist given last segment=" + lastSegment);
+	if (timeStamp == "stop") return log.info("stream download abort");
 	if (timeStamp !== localTimeStamp) return log.warn("timestamp mismatch. hls download aborted");
+
 	(url.parse(playlistUrl).protocol == "http:" ? http : https).get(playlistUrl, function (res) {
 		var playlist = "";
 		res.on("data", function(data) {
@@ -42,7 +51,7 @@ var parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback)
 			// now playlist is ready to be processed
 			var delay = parseIntParameter(playlist, "#EXT-X-TARGETDURATION:");
 			var sequence = parseIntParameter(playlist, "#EXT-X-MEDIA-SEQUENCE:");
-			//console.log("playlist delay=" + delay + " sequence=" + sequence);
+			//log.debug("playlist delay=" + delay + " sequence=" + sequence);
 			var initialBuffer = false;
 			if (lastSegment == -1) {
 				initialBuffer = true;
@@ -54,14 +63,6 @@ var parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback)
 			var lines = playlist.split("\n");
 			var segmentUrl = null;
 
-			/*if (initialBuffer) {
-				for (var i=0; i<lines.length; i++) {
-					if (lines[i].slice(0, 7) === "http://") {
-						segmentUrl = lines[i];
-						break;
-					}
-				}
-			} else {*/
 			// download the (sequence - lastSegment) last item of the playlist, then refresh
 			var urlsToIgnore = sequence - 1 - lastSegment;
 
@@ -75,12 +76,9 @@ var parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback)
 					}
 				}
 			}
-			//}
 
 			if (segmentUrl) {
-				//log.debug("get " + segmentUrl);
 				if (segmentUrl.indexOf("://") < 0) {
-					//console.log("playlistUrl=" + playlistUrl);
 					var playlistUrlSplit = playlistUrl.split("/");
 					playlistUrlSplit[playlistUrlSplit.length-1] = segmentUrl;
 					//log.info("uri " + segmentUrl + " completed with path is " + playlistUrlSplit.join("/"));
@@ -94,7 +92,6 @@ var parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback)
 						//log.debug("ffmpeg sent " + data.length + " bytes");
 						hlsData = (hlsData ? Buffer.concat([hlsData, data]) : new Buffer(data))
 					});
-					//res.on("end", function() {
 					converter.stdout.on("end", function() {
 						if (remainingData && remainingData.length > 0) {
 							log.debug("prematurely flushing " + remainingData.length + " from buffer");
@@ -109,7 +106,7 @@ var parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback)
 						if (initialBuffer || EMIT_INTERVAL >= delay) { //if EMIT_INTERVAL is bigger than delay, sends everything at once
 							incrementalEmitter(hlsData.length, delay, { segment: lastSegment, substep: 0 }, callback);
 						} else { // if EMIT_INTERVAL is smaller	than delay, sends in steps.
-							var nSteps = Math.ceil(delay / EMIT_INTERVAL); // >= 2
+							var nSteps = Math.ceil(delay / EMIT_INTERVAL);
 							incrementalEmitter(Math.ceil(hlsData.length / nSteps), delay, { segment: lastSegment, substep: 0 }, callback);
 						}
 					});
@@ -121,8 +118,8 @@ var parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback)
 	});
 }
 
-
-var parseMaster = function(masterUrl, callback) {
+// parses the master playlist, that contains the url of the child playlist that will have to be regularly refreshed
+var parseMaster = function(masterUrl, bitrateCallback, playlistUrlCallback) {
 	var parser = m3u8.createStream();
 
 	var file = (url.parse(masterUrl).protocol == "http:" ? http : https).get(masterUrl, function (res) {
@@ -137,7 +134,7 @@ var parseMaster = function(masterUrl, callback) {
 	const M3U8_TARGET_BANDWIDTH = 128000;
 
 	parser.on('m3u', function(m3u) {
-		//console.log("m3u: " + ); //toString());
+		//log.debug("m3u: " + JSON.stringify(m3u, null, "\t"));
 		var nStreams = m3u.items.StreamItem.length;
 
 		var iTargetBandwidth = 0;
@@ -146,7 +143,7 @@ var parseMaster = function(masterUrl, callback) {
 		for (var i=0; i<nStreams; i++) {
 			var bandwidth = m3u.items.StreamItem[i].get("bandwidth");
 			var uri = m3u.items.StreamItem[i].get("uri");
-			//console.log("stream " + i + " has bw=" + bandwidth + " and uri=" + uri);
+			//log.debug("stream " + i + " has bw=" + bandwidth + " and uri=" + uri);
 			// choose the stream whose bandwidth is the closest from the target
 			if (Math.abs(bandwidth - M3U8_TARGET_BANDWIDTH) <
 				Math.abs(m3u.items.StreamItem[iTargetBandwidth].get("bandwidth") - M3U8_TARGET_BANDWIDTH)) {
@@ -156,30 +153,30 @@ var parseMaster = function(masterUrl, callback) {
 			}
 		}
 		log.info("selected stream is #" + iTargetBandwidth + " at " + selectedBandwidth + "bps and uri=" + selectedUri);
+		bitrateCallback(selectedBandwidth / 8);
+
 		if (selectedUri.indexOf("://") < 0) {
 			log.debug("masterUrl=" + url.format(masterUrl));
 			var mstSplit = url.format(masterUrl).split("/");
 			mstSplit[mstSplit.length-1] = selectedUri;
 			log.info("uri " + selectedUri + " completed with path is " + mstSplit.join("/"));
-			return callback(mstSplit.join("/"));
+			return playlistUrlCallback(mstSplit.join("/"));
 		} else {
-			return callback(selectedUri);
+			return playlistUrlCallback(selectedUri);
 		}
 	});
 }
 
-module.exports = function(masterUrl, dataCallback) {
+module.exports = function(masterUrl, bitrateCallback, dataCallback) {
 	timeStamp = new Date(); // timeStamp helps having maximum one download at the same time.
-	parseMaster(masterUrl, function(playlistUrl) {
-		parsePlaylist(playlistUrl, -1, timeStamp, function(data) {
-			return dataCallback(data);
-		});
+	parseMaster(masterUrl, bitrateCallback, function(playlistUrl) {
+		parsePlaylist(playlistUrl, -1, timeStamp, dataCallback);
 	});
 
 	return {
 		abort: function() {
 			log.info("request hls download abort");
-			timeStamp = null;
+			timeStamp = "stop"; // will cause parsePlaylist and incrementalEmmiter next executions to stop.
 		}
 	}
 }
