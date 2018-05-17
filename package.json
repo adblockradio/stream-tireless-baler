@@ -1,7 +1,7 @@
 {
-  "name": "adblockradio-dl",
+  "name": "stream-tireless-baler",
   "version": "1.0.0",
-  "description": "Radio stream downloader",
+  "description": "Universal and failsafe radio stream downloader as a Node Readable module",
   "main": "dl.js",
   "dependencies": {
     "abr-log": "git+https://git@github.com/dest4/log.git",
