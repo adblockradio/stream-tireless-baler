@@ -23,11 +23,6 @@ dl.on("headers", function(headers) {
 	log.info("stream headers\n" + JSON.stringify(headers, null, "\t"));
 });
 
-dl.on("newsegment", function(tBuffer, onReadyCallback) {
-	log.info("new segment here. tBuffer=" + Math.round(tBuffer*10)/10 + " seconds.");
-	onReadyCallback();
-});
-
 dl.on("data", function(obj) {
 	log.debug("received " + obj.data.length + " bytes. tBuffer=" + obj.tBuffer.toFixed(2) + "s. newSeg=" + obj.newSegment);
 });

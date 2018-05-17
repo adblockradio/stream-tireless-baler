@@ -8,7 +8,6 @@ const { Readable } = require('stream');
 const { log } = require("abr-log")("dl");
 const url = require("url");
 const m3u8handler = require("./m3u8handler.js");
-const get = require("./get.js");
 const http = require("http");
 const https = require("https");
 const cp = require('child_process');
@@ -39,7 +38,7 @@ const _get = function(exturl, callback) {
 
 // function that calls an API to get metadata about a radio
 const getRadioMetadata = function(country, name, callback) {
-	get(consts.API_PATH + encodeURIComponent(name), function(err, result) { //, corsEnabled
+	_get(consts.API_PATH + encodeURIComponent(name), function(err, result) { //, corsEnabled
 		if (err || !result) {
 			return callback(err, null);
 		}
