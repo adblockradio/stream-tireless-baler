@@ -84,7 +84,6 @@ class StreamDl extends Readable {
 		this.canonical = this.country + "_" + this.name;
 		this.receivedBytes = 0;
 		this.receivedBytesInCurrentSegment = 0;
-		this.tBuffer = 0;
 		this.segDuration = options.segDuration;
 
 		var self = this;
@@ -283,6 +282,10 @@ class StreamDl extends Readable {
 		});
 	}
 
+	tBuffer() {
+		return this.receivedBytes / this.bitrate - (this.lastData - this.firstData) / 1000;
+	}
+
 	onData(data) {
 		var self = this;
 		var newSegment = false;
@@ -292,21 +295,21 @@ class StreamDl extends Readable {
 			newSegment = true;
 		}
 		this.lastData = new Date();
-		this.receivedBytes += data.length;
-		this.tBuffer = this.receivedBytes / this.bitrate - (this.lastData - this.firstData)/1000;
 
 		var limitBytes = this.segDuration * this.bitrate;
 
 		if (!limitBytes || this.receivedBytesInCurrentSegment + data.length < limitBytes) {
 			this.receivedBytesInCurrentSegment += data.length;
-			return this.push({ newSegment: newSegment, tBuffer: this.tBuffer, data: data });
+			this.receivedBytes += data.length;
+			return this.push({ newSegment: newSegment, tBuffer: this.tBuffer(), data: data });
 
 		} else {
 
 			// send the correct amount of bytes to fill the current segment
 			var fillAmount = (limitBytes - this.receivedBytesInCurrentSegment) % limitBytes;
 			if (fillAmount > 0) {
-				this.push({ newSegment: newSegment, tBuffer: this.tBuffer, data: data.slice(0, fillAmount) });
+				this.receivedBytes += fillAmount;
+				this.push({ newSegment: newSegment, tBuffer: this.tBuffer(), data: data.slice(0, fillAmount) });
 				data = data.slice(fillAmount);
 			}
 			this.receivedBytesInCurrentSegment = 0;
@@ -314,13 +317,15 @@ class StreamDl extends Readable {
 			// send as many full segments as necessary
 			var nSegs = Math.floor(data.length / limitBytes);
 			for (let i=0; i<nSegs; i++) {
-				this.push({ newSegment: true, tBuffer: this.tBuffer, data: data.slice(i*limitBytes, (i+1)*limitBytes) });
+				this.receivedBytes += limitBytes;
+				this.push({ newSegment: true, tBuffer: this.tBuffer(), data: data.slice(i*limitBytes, (i+1)*limitBytes) });
 			}
 
 			// send the remaining amount of bytes in a new segment
 			if (nSegs * limitBytes < data.length) {
-				this.push({ newSegment: true, tBuffer: this.tBuffer, data: data.slice(nSegs*limitBytes) });
 				this.receivedBytesInCurrentSegment = data.length - nSegs * limitBytes;
+				this.receivedBytes += data.length - nSegs * limitBytes;
+				this.push({ newSegment: true, tBuffer: this.tBuffer(), data: data.slice(nSegs*limitBytes) });
 			}
 		}
 	}
