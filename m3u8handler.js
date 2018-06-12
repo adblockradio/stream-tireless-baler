@@ -20,11 +20,11 @@ var parseIntParameter = function(data, name) {
 	return parseInt(data.slice(p1, p1 + p2));
 }
 
-var remainingData = null;
-var incrementalTimeoutHandle = null;
+let remainingData = null;
+let incrementalTimeoutHandle = null;
 
 // this function will return small chunks of data at regular intervals, not to clog the system behind
-var incrementalEmitter = function(size, delay, origin, emitter) {
+const incrementalEmitter = function(size, delay, origin, emitter) {
 	if (timeStamp == "stop") return log.debug("incremental emit aborted");
 	//log.debug("incrementalEmitter: send " + size + " bytes to analyser " + origin.segment + ":" + origin.substep);
 	emitter(remainingData.slice(0, size), delay);
@@ -37,7 +37,7 @@ var incrementalEmitter = function(size, delay, origin, emitter) {
 }
 
 // parses the m3u8 child playlist, that contains the list of audio files that changes over time.
-var parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback) {
+const parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback) {
 	//log.debug("get playlist given last segment=" + lastSegment);
 	if (timeStamp == "stop") return log.info("stream download abort");
 	if (timeStamp !== localTimeStamp) return log.warn("timestamp mismatch. hls download aborted");
@@ -119,7 +119,7 @@ var parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback)
 }
 
 // parses the master playlist, that contains the url of the child playlist that will have to be regularly refreshed
-var parseMaster = function(masterUrl, bitrateCallback, playlistUrlCallback) {
+const parseMaster = function(masterUrl, bitrateCallback, playlistUrlCallback) {
 	var parser = m3u8.createStream();
 
 	var file = (url.parse(masterUrl).protocol == "http:" ? http : https).get(masterUrl, function (res) {
@@ -135,17 +135,17 @@ var parseMaster = function(masterUrl, bitrateCallback, playlistUrlCallback) {
 
 	parser.on('m3u', function(m3u) {
 		//log.debug("m3u: " + JSON.stringify(m3u, null, "\t"));
-		var nStreams = m3u.items.StreamItem.length;
+		const nStreams = m3u.items.StreamItem.length;
 
-		var iTargetBandwidth = 0;
-		var selectedBandwidth = 0;
-		var selectedUri = "";
-		for (var i=0; i<nStreams; i++) {
-			var bandwidth = m3u.items.StreamItem[i].get("bandwidth");
-			var uri = m3u.items.StreamItem[i].get("uri");
+		let iTargetBandwidth;
+		let selectedBandwidth;
+		let selectedUri;
+		for (let i=0; i<nStreams; i++) {
+			let bandwidth = m3u.items.StreamItem[i].get("bandwidth");
+			let uri = m3u.items.StreamItem[i].get("uri");
 			//log.debug("stream " + i + " has bw=" + bandwidth + " and uri=" + uri);
 			// choose the stream whose bandwidth is the closest from the target
-			if (Math.abs(bandwidth - M3U8_TARGET_BANDWIDTH) <
+			if (i == 0 || Math.abs(bandwidth - M3U8_TARGET_BANDWIDTH) <
 				Math.abs(m3u.items.StreamItem[iTargetBandwidth].get("bandwidth") - M3U8_TARGET_BANDWIDTH)) {
 				iTargetBandwidth = i;
 				selectedBandwidth = bandwidth;
@@ -157,7 +157,7 @@ var parseMaster = function(masterUrl, bitrateCallback, playlistUrlCallback) {
 
 		if (selectedUri.indexOf("://") < 0) {
 			log.debug("masterUrl=" + url.format(masterUrl));
-			var mstSplit = url.format(masterUrl).split("/");
+			let mstSplit = url.format(masterUrl).split("/");
 			mstSplit[mstSplit.length-1] = selectedUri;
 			log.info("uri " + selectedUri + " completed with path is " + mstSplit.join("/"));
 			return playlistUrlCallback(mstSplit.join("/"));
