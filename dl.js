@@ -162,7 +162,6 @@ class StreamDl extends Readable {
 			});
 		}
 
-		var urlloc = url.parse(this.url);
 		//log.debug(JSON.stringify(urlloc));
 		this.req = (urlParsed.protocol == "http:" ? http : https).get(urlParsed, function (res) {
 			self.res = res;

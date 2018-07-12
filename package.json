@@ -1,15 +1,11 @@
 {
   "name": "stream-tireless-baler",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Universal and failsafe radio stream downloader as a Node Readable module",
   "main": "dl.js",
   "dependencies": {
-    "abr-log": "git+https://git@github.com/dest4/log.git",
-    "chalk": "^2.3.0",
-    "m3u8": "^0.0.7",
-    "moment": "^2.21.0",
-    "winston": "^3.0.0-rc3",
-    "winston-daily-rotate-file": "^3.0.1"
+    "abr-log": "^1.0.2",
+    "m3u8": "^0.0.7"
   },
   "devDependencies": {},
   "scripts": {
