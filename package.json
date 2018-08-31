@@ -1,6 +1,6 @@
 {
   "name": "stream-tireless-baler",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "Universal and failsafe radio stream downloader as a Node Readable module",
   "main": "dl.js",
   "dependencies": {
@@ -12,5 +12,5 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Alexandre Storelli <a_npm@storelli.fr>",
-  "license": "AGPL-3.0"
+  "license": "MIT"
 }
