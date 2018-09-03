@@ -100,8 +100,6 @@ class StreamDl extends Readable {
 		this.country = options.country;
 		this.name = options.name;
 		this.canonical = this.country + "_" + this.name;
-		this.receivedBytes = 0;
-		this.receivedBytesInCurrentSegment = 0;
 		this.segDuration = options.segDuration;
 
 		var self = this;
@@ -130,7 +128,7 @@ class StreamDl extends Readable {
 				lastcheckok: result.lastcheckok,
 				homepage: result.homepage
 			});
-			self.startDl();
+			self.startDl(null);
 		});
 	}
 
@@ -161,6 +159,8 @@ class StreamDl extends Readable {
 		this.date = new Date();
 		this.firstData = null;
 		this.lastData = new Date();
+		this.receivedBytes = 0;
+		this.receivedBytesInCurrentSegment = 0;
 		this.res = null;
 
 		if (this.req) this.req.abort();
@@ -304,7 +304,6 @@ class StreamDl extends Readable {
 	}
 
 	onData(data) {
-		var self = this;
 		var newSegment = false;
 		if (this.firstData == null) {
 			this.firstData = new Date();
@@ -316,9 +315,10 @@ class StreamDl extends Readable {
 		var limitBytes = this.segDuration * this.bitrate;
 
 		if (!limitBytes || this.receivedBytesInCurrentSegment + data.length < limitBytes) {
+
 			this.receivedBytesInCurrentSegment += data.length;
 			this.receivedBytes += data.length;
-			return this.push({ newSegment: newSegment, tBuffer: this.tBuffer(), data: data });
+			this.push({ newSegment: newSegment, tBuffer: this.tBuffer(), data: data });
 
 		} else {
 
