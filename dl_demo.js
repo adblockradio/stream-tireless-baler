@@ -52,4 +52,4 @@ dl.on("error", function(err) {
 setTimeout(function() {
 	log.info("stopping stream download.");
 	dl.stopDl();
-}, 8000);
+}, 40000);

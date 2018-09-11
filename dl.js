@@ -101,6 +101,7 @@ class StreamDl extends Readable {
 		this.name = options.name;
 		this.canonical = this.country + "_" + this.name;
 		this.segDuration = options.segDuration;
+		this.buffer = 0;
 
 		var self = this;
 		getRadioMetadata(this.country, this.name, function(err, result) {
@@ -300,7 +301,12 @@ class StreamDl extends Readable {
 	}
 
 	tBuffer() {
-		return this.receivedBytes / this.bitrate - (this.lastData - this.firstData) / 1000;
+		// the bitrate is not perfectly known. we freeze the buffer length after a few seconds so that
+		// the value does not drift over time
+		if (this.lastData - this.firstData < 20000) {
+			this.buffer = this.receivedBytes / this.bitrate - (this.lastData - this.firstData) / 1000;
+		}
+		return this.buffer;
 	}
 
 	onData(data) {
