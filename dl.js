@@ -102,6 +102,8 @@ class StreamDl extends Readable {
 		this.canonical = this.country + "_" + this.name;
 		this.segDuration = options.segDuration;
 		this.buffer = 0;
+		this.ffprobeLock = false; // boolean to indicate whether ffprobe is (asynchronously) determining the bitrate
+		this.ffprobeDone = false; // boolean to indicate that ffprobe bitrate has already been read
 
 		var self = this;
 		getRadioMetadata(this.country, this.name, function(err, result) {
@@ -309,22 +311,59 @@ class StreamDl extends Readable {
 		return this.buffer;
 	}
 
+
+	// get a reliable value of bitrate, so that tBuffer can be correctly estimated
+	// done before the first data is emitted.
 	onData(data) {
-		var newSegment = false;
 		if (this.firstData == null) {
 			this.firstData = new Date();
 			log.info(this.canonical + " first data received at " + this.firstData);
-			newSegment = true;
 		}
+
+		if (this.ffprobeDone) return this.onData2(data, false);
+
+		this.ffprobeBuffer = this.ffprobeBuffer ? Buffer.concat([this.ffprobeBuffer, data]) : data;
+
+		if (this.ffprobeBuffer.length < 16000 || this.ffprobeLock) return;
+
+		this.ffprobeLock = true;
+
+		const self = this;
+		const ffprobe = cp.spawn("ffprobe", ["-"], { stdio: ['pipe', 'pipe', 'pipe'] });
+		ffprobe.stderr.on("data", function(ffdata) {
+			//log.debug("ffprobe stderr data=" + ffdata);
+			let ffdatasplit = ("" + ffdata).split('\n');
+			ffdatasplit = ffdatasplit.filter(line => line.includes('Duration') && line.includes('bitrate'));
+			if (!ffdatasplit.length) return; // will wait for further data events containing useful payload
+			let linesplit = ffdatasplit[0].split(' ');
+			if (linesplit.length < 2) {
+				log.warn('could not parse ffprobe result: ' + ffdatasplit[0] + '. keep bitrate=' + self.bitrate + ' bytes/s');
+				self.ffprobeDone = true; // abort ffprobe bitrate detection
+				self.onData2(self.ffprobeBuffer, true);
+				delete self.ffprobeBuffer;
+				return;
+			}
+			self.bitrate = Number(linesplit[linesplit.length - 2]) * 1000 / 8;
+			log.info(self.canonical + " ffprobe bitrate = " + self.bitrate + " bytes/s");
+			self.ffprobeDone = true; // abort ffprobe bitrate detection
+			self.onData2(self.ffprobeBuffer, true);
+			delete self.ffprobeBuffer;
+		});
+		ffprobe.stdin.end(this.ffprobeBuffer);
+	}
+
+	onData2(data, isFirstSegment) {
+		const self = this;
+		let newSegment = false || isFirstSegment;
 		this.lastData = new Date();
 
-		var limitBytes = this.segDuration * this.bitrate;
+		const limitBytes = this.segDuration * this.bitrate;
 
 		if (!limitBytes || this.receivedBytesInCurrentSegment + data.length < limitBytes) {
 
 			this.receivedBytesInCurrentSegment += data.length;
 			this.receivedBytes += data.length;
-			this.push({ newSegment: newSegment, tBuffer: this.tBuffer(), data: data });
+			this.push({ newSegment: newSegment, tBuffer: self.tBuffer(), data: data });
 
 		} else {
 
