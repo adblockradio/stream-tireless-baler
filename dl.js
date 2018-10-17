@@ -102,8 +102,6 @@ class StreamDl extends Readable {
 		this.canonical = this.country + "_" + this.name;
 		this.segDuration = options.segDuration;
 		this.buffer = 0;
-		this.ffprobeLock = false; // boolean to indicate whether ffprobe is (asynchronously) determining the bitrate
-		this.ffprobeDone = false; // boolean to indicate that ffprobe bitrate has already been read
 
 		var self = this;
 		getRadioMetadata(this.country, this.name, function(err, result) {
@@ -165,6 +163,8 @@ class StreamDl extends Readable {
 		this.receivedBytes = 0;
 		this.receivedBytesInCurrentSegment = 0;
 		this.res = null;
+		this.ffprobeLock = false; // boolean to indicate whether ffprobe is (asynchronously) determining the bitrate
+		this.ffprobeDone = false; // boolean to indicate that ffprobe bitrate has already been read
 
 		if (this.req) this.req.abort();
 
@@ -330,20 +330,25 @@ class StreamDl extends Readable {
 
 		const self = this;
 		const ffprobe = cp.spawn("ffprobe", ["-"], { stdio: ['pipe', 'pipe', 'pipe'] });
+		let ffprobeRes = "";
 		ffprobe.stderr.on("data", function(ffdata) {
-			//log.debug("ffprobe stderr data=" + ffdata);
-			let ffdatasplit = ("" + ffdata).split('\n');
-			ffdatasplit = ffdatasplit.filter(line => line.includes('Duration') && line.includes('bitrate'));
+			ffprobeRes += ffdata;
+		});
+		ffprobe.stderr.on("end", function() {
+			//log.debug("ffprobe stderr data=" + ffprobeRes);
+			let ffdatasplit = ("" + ffprobeRes).split('\n');
+			ffdatasplit = ffdatasplit.filter(line => line.includes('Stream') && line.includes('Audio') && line.includes('kb/s'));
 			if (!ffdatasplit.length) return; // will wait for further data events containing useful payload
 			let linesplit = ffdatasplit[0].split(' ');
-			if (linesplit.length < 2) {
+			const i = linesplit.indexOf('kb/s') - 1;
+			if (linesplit.length < 2 || i < 0) {
 				log.warn('could not parse ffprobe result: ' + ffdatasplit[0] + '. keep bitrate=' + self.bitrate + ' bytes/s');
 				self.ffprobeDone = true; // abort ffprobe bitrate detection
 				self.onData2(self.ffprobeBuffer, true);
 				delete self.ffprobeBuffer;
 				return;
 			}
-			self.bitrate = Number(linesplit[linesplit.length - 2]) * 1000 / 8;
+			self.bitrate = Number(linesplit[i]) * 1000 / 8;
 			log.info(self.canonical + " ffprobe bitrate = " + self.bitrate + " bytes/s");
 			self.ffprobeDone = true; // abort ffprobe bitrate detection
 			self.onData2(self.ffprobeBuffer, true);
