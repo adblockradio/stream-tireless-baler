@@ -205,7 +205,7 @@ class StreamDl extends Readable {
 				// redirect e.g. fr_nrj {"server":"Apache-Coyote/1.1","set-cookie":["JSESSIONID=F41DB621F21B84920E2F7F0E92209B67; Path=/; HttpOnly"],
 				// "location":"http://185.52.127.132/fr/30001/mp3_128.mp3","content-length":"0","date":"Wed, 13 Jul 2016 08:08:09 GMT","connection":"close"}
 				self.url = res.headers.location;
-				log.info(self.canonical + "following redirection to " + self.url);
+				log.info(self.canonical + " following redirection to " + self.url);
 				self.req.abort();
 				self.startDl(null);
 				return;
@@ -353,7 +353,6 @@ class StreamDl extends Readable {
 	}
 
 	onData2(data, isFirstSegment) {
-		const self = this;
 		let newSegment = false || isFirstSegment;
 		this.lastData = new Date();
 
@@ -363,7 +362,7 @@ class StreamDl extends Readable {
 
 			this.receivedBytesInCurrentSegment += data.length;
 			this.receivedBytes += data.length;
-			this.push({ newSegment: newSegment, tBuffer: self.tBuffer(), data: data });
+			this.push({ newSegment: newSegment, tBuffer: this.tBuffer(), data: data });
 
 		} else {
 
