@@ -75,7 +75,7 @@ const getRadioMetadata = function(country, name, callback) {
 				results[i].bitrate = results[i].bitrate * 1000 / 8; // result in kbps
 			} else {
 				results[i].bitrate = 128000 / 8;
-				log.warn("getRadioMetadata: default bitrate to 128k");
+				log.warn(country + "_" + name + " getRadioMetadata: API did not specify a bitrate. temporarily default to 128k");
 			}
 			return callback(null, results[i]);
 		} else {
@@ -114,21 +114,7 @@ class StreamDl extends Readable {
 			self.codec = result.codec;
 			self.hls = result.hls;
 			self.bitrate = result.bitrate;
-			self.favicon = result.favicon;
-			self.emit("metadata", {
-				country: self.country,
-				name: self.name,
-				url: self.url,
-				favicon: self.favicon,
-				codec: self.codec,
-				ext: consts.SAVE_EXT[self.codec],
-				bitrate: self.bitrate,
-				hls: result.hls,
-				tags: result.tags,
-				votes: result.votes,
-				lastcheckok: result.lastcheckok,
-				homepage: result.homepage
-			});
+			self.apiresult = result;
 			self.startDl(null);
 		});
 	}
@@ -218,15 +204,15 @@ class StreamDl extends Readable {
 					playlistContents += data;
 				});
 				self.res.on('end', function() {
-					//log.debug(self.country + "_" + self.name + " received the following playlist:\n" + playlistContents);
+					//log.debug(self.canonical + " received the following playlist:\n" + playlistContents);
 					var lines = playlistContents.split("\n");
 					var newUrlFound = false;
 					for (var i=lines.length-1; i>=0; i--) {
-						if (isM3U && lines[i].slice(0, 7) == "http://") { 		// audio/x-mpegurl
+						if (isM3U && lines[i].slice(0, 7) == "http://") {       // audio/x-mpegurl
 							self.url = lines[i];
 							newUrlFound = true;
 							break;
-						} else if (isASF) { 									// video/x-ms-asf
+						} else if (isASF) {                                     // video/x-ms-asf
 							var p1 = lines[i].indexOf("<REF HREF=\"");
 							if (p1 < 0) continue
 							if (lines[i].slice(p1+11, p1+18) == "http://") {
@@ -234,7 +220,7 @@ class StreamDl extends Readable {
 								newUrlFound = true;
 								break;
 							}
-						} else if (!isM3U && !isASF) { 							// audio/x-scpls
+						} else if (!isM3U && !isASF) {                          // audio/x-scpls
 							var p1 = lines[i].indexOf("=");
 							if (p1 < 0) continue
 							if (lines[i].slice(p1+1, p1+8) == "http://") {
@@ -302,16 +288,6 @@ class StreamDl extends Readable {
 		});
 	}
 
-	tBuffer() {
-		// the bitrate is not perfectly known. we freeze the buffer length after a few seconds so that
-		// the value does not drift over time
-		if (this.lastData - this.firstData < 20000) {
-			this.buffer = this.receivedBytes / this.bitrate - (this.lastData - this.firstData) / 1000;
-		}
-		return this.buffer;
-	}
-
-
 	// get a reliable value of bitrate, so that tBuffer can be correctly estimated
 	// done before the first data is emitted.
 	onData(data) {
@@ -342,19 +318,44 @@ class StreamDl extends Readable {
 			let linesplit = ffdatasplit[0].split(' ');
 			const i = linesplit.indexOf('kb/s') - 1;
 			if (linesplit.length < 2 || i < 0) {
-				log.warn('could not parse ffprobe result: ' + ffdatasplit[0] + '. keep bitrate=' + self.bitrate + ' bytes/s');
-				self.ffprobeDone = true; // abort ffprobe bitrate detection
-				self.onData2(self.ffprobeBuffer, true);
-				delete self.ffprobeBuffer;
-				return;
+				log.warn(self.canonical + ' could not parse ffprobe result: ' + ffdatasplit[0] + '. keep bitrate=' + self.bitrate + ' bytes/s');
+				return done();
+			} else {
+				self.bitrate = Number(linesplit[i]) * 1000 / 8;
+				log.info(self.canonical + " ffprobe bitrate = " + self.bitrate + " bytes/s");
+				return done();
 			}
-			self.bitrate = Number(linesplit[i]) * 1000 / 8;
-			log.info(self.canonical + " ffprobe bitrate = " + self.bitrate + " bytes/s");
-			self.ffprobeDone = true; // abort ffprobe bitrate detection
-			self.onData2(self.ffprobeBuffer, true);
-			delete self.ffprobeBuffer;
 		});
 		ffprobe.stdin.end(this.ffprobeBuffer);
+
+		const done = function() {
+			self.ffprobeDone = true; // will not do ffprobe bitrate detection in the future
+			self.emit("metadata", {
+				country: self.country,
+				name: self.name,
+				url: self.url,
+				favicon: self.apiresult.favicon,
+				codec: self.codec,
+				ext: consts.SAVE_EXT[self.codec],
+				bitrate: self.bitrate,
+				hls: self.apiresult.hls,
+				tags: self.apiresult.tags,
+				votes: self.apiresult.votes,
+				lastcheckok: self.apiresult.lastcheckok,
+				homepage: self.apiresult.homepage
+			});
+			self.onData2(self.ffprobeBuffer, true);
+			delete self.ffprobeBuffer;
+		}
+	}
+
+	tBuffer() {
+		// the bitrate is not perfectly known. we freeze the buffer length after a few seconds so that
+		// the value does not drift over time
+		if (this.lastData - this.firstData < 20000) {
+			this.buffer = this.receivedBytes / this.bitrate - (this.lastData - this.firstData) / 1000;
+		}
+		return this.buffer;
 	}
 
 	onData2(data, isFirstSegment) {
