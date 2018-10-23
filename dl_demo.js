@@ -25,11 +25,13 @@
 const { log } = require("abr-log")("dldemo");
 const Dl = require("./dl.js").StreamDl;
 
-//const country = "France"; const name = "BFM Business";
-//const country = "France"; const name = "Radio Nova"; // example of classic HTTP stream
-//const country = "Spain"; const name = "RAC1"; // example of HTTP/0.9 stream
-//const country = "Italy"; const name = "Radio Capital"; // example of HLS stream
-const country = "Belgium"; const name = "Zen FM"; // example of audio/x-scpls playlist parsed to find the final URL
+const country = "France"; const name = "Radio Nova";            // regular HTTP stream
+//const country = "France"; const name = "Djam Radio";            // stream where radio-browser.info gives no codec info;
+//const country = "France"; const name = "BFM Business";            // stream with many redirections
+//const country = "Spain"; const name = "Cadena 100";             // HTTP/0.9 stream
+//const country = "Italy"; const name = "Radio Capital";          // HLS stream
+//const country = "Belgium"; const name = "Zen FM";               // audio/x-scpls playlist parsed to find the final URL
+//const country = "Switzerland"; const name = "Basspistol (OGG)"; // OGG stream
 
 const dl = new Dl({ country: country, name: name, segDuration: 3 });
 
@@ -54,3 +56,4 @@ setTimeout(function() {
 	log.info("stopping stream download.");
 	dl.stopDl();
 }, 40000);
+

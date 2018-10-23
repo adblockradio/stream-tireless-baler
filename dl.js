@@ -31,7 +31,23 @@ const https = require("https");
 const cp = require('child_process');
 
 const consts = {
-	SAVE_EXT: { "MP3": "mp3", "AAC": "aac", "AAC+": "aac", "OGG": "ogg", "HLS": "aac" },
+	SUPPORTED_EXTENSIONS: [
+		"mp3",
+		"aac",
+		"ogg"
+	],
+	CODEC_FFPROBE_TRANSLATION: { // translation from codecs from ffprobe to file extensions
+		"mp3": "mp3",
+		"aac": "aac",
+		"vorbis": "ogg",
+	},
+	CODEC_API_TRANSLATION: { // translation from codecs from radio-browser.info to file extensions
+		"MP3": "mp3",
+		"AAC": "aac",
+		"AAC+": "aac",
+		"OGG": "ogg",
+		"HLS": "aac"
+	},
 	API_PATH: "http://www.radio-browser.info/webservice/json/stations/bynameexact/"
 }
 
@@ -71,6 +87,7 @@ const getRadioMetadata = function(country, name, callback) {
 
 		if (i >= 0) {
 			//log.info("getRadioMetadata: metadata received for " + country + "_" + name);
+			//log.debug("getRadioMetadata: metadata=" + JSON.stringify(results[i]));
 			if (!isNaN(results[i].bitrate) && results[i].bitrate > 0) {
 				results[i].bitrate = results[i].bitrate * 1000 / 8; // result in kbps
 			} else {
@@ -109,10 +126,16 @@ class StreamDl extends Readable {
 				log.warn(self.canonical + " problem fetching radio info: " + err);
 				return self.emit("error", "problem fetching radio info: " + err);
 			}
+			const translatedCodec = consts.CODEC_API_TRANSLATION[result.codec];
+			if (!consts.SUPPORTED_EXTENSIONS.includes(translatedCodec)) {
+				log.warn(self.canonical + ": API returned a codec, " + result.codec + ", that is not supported");
+			} else if (!result.codec) {
+				log.warn(self.canonical + ": API returned an empty codec field");
+			}
 			self.url = result.url;
 			self.origUrl = result.url;
-			self.codec = result.codec;
-			self.hls = result.hls;
+			self.ext = translatedCodec;
+			self.hls = result.codec === "HLS" || result.hls === "1";
 			self.bitrate = result.bitrate;
 			self.apiresult = result;
 			self.startDl(null);
@@ -134,11 +157,7 @@ class StreamDl extends Readable {
 	startDl(timestamp) {
 		var self = this;
 
-		log.debug(this.canonical + " start dl url= " + this.url + " codec " + this.codec + " (*." + consts.SAVE_EXT[this.codec] + "), bitrate expected to be " + this.bitrate);
-		if (!consts.SAVE_EXT[this.codec]) {
-			log.error("codec " + this.codec + " is not supported");
-			return this.emit("error", "codec " + codec + " is not supported");
-		}
+		log.debug(this.canonical + " start dl url= " + this.url + " ext " + this.ext + " bitrate expected to be " + this.bitrate);
 		if (this.date && timestamp && timestamp != this.date) {
 			log.debug("startDl has been called with the wrong timestamp, abort. current=" + timestamp + " official=" + this.date);
 			return;
@@ -159,10 +178,11 @@ class StreamDl extends Readable {
 		var urlParsed = url.parse(this.url);
 
 		// special handler for HLS streams
-		if (this.codec == "HLS" || this.hls == "1") {
+		if (this.hls) {
 			return this.req = m3u8handler(urlParsed, function(bitrate) {
 				log.debug("update bitrate to " + bitrate);
 				self.bitrate = bitrate;
+				self.hlsBitrate = true; // useless to call ffprobe if the bitrate is known reliably
 			}, function(data, delay) {
 				// hls blocks may provide data in too big blocks. inject it progressively in the analysis flow
 				self.onData(data);
@@ -208,14 +228,14 @@ class StreamDl extends Readable {
 					var lines = playlistContents.split("\n");
 					var newUrlFound = false;
 					for (var i=lines.length-1; i>=0; i--) {
-						if (isM3U && lines[i].slice(0, 7) == "http://") {       // audio/x-mpegurl
+						if (isM3U && lines[i].slice(0, 4) == "http") {          // audio/x-mpegurl
 							self.url = lines[i];
 							newUrlFound = true;
 							break;
 						} else if (isASF) {                                     // video/x-ms-asf
 							var p1 = lines[i].indexOf("<REF HREF=\"");
 							if (p1 < 0) continue
-							if (lines[i].slice(p1+11, p1+18) == "http://") {
+							if (lines[i].slice(p1+11, p1+15) == "http") {
 								self.url = lines[i].slice(p1+11).split("\"")[0];
 								newUrlFound = true;
 								break;
@@ -223,7 +243,7 @@ class StreamDl extends Readable {
 						} else if (!isM3U && !isASF) {                          // audio/x-scpls
 							var p1 = lines[i].indexOf("=");
 							if (p1 < 0) continue
-							if (lines[i].slice(p1+1, p1+8) == "http://") {
+							if (lines[i].slice(p1+1, p1+5) == "http") {
 								self.url = lines[i].slice(p1+1);
 								newUrlFound = true;
 								break;
@@ -234,6 +254,7 @@ class StreamDl extends Readable {
 						self.startDl(null)
 					} else {
 						log.error(self.canonical + " could not parse playlist");
+						log.debug(playlistContents);
 						return self.emit("error", "could not parse playlist"); //predictionCallback(42, null, stream.getStatus());
 					}
 				});
@@ -279,7 +300,7 @@ class StreamDl extends Readable {
 							log.warn(self.canonical + " original url was " + self.origUrl);
 							self.url = result.url;
 							self.origUrl = result.url;
-							self.bitrate = result.bitrate;
+							if (result.bitrate) self.bitrate = result.bitrate;
 						}
 						self.startDl(timestamp);
 					});
@@ -305,6 +326,30 @@ class StreamDl extends Readable {
 		this.ffprobeLock = true;
 
 		const self = this;
+
+		const done = function() {
+			self.ffprobeDone = true; // will not do ffprobe bitrate detection in the future
+			self.emit("metadata", {
+				country: self.country,
+				name: self.name,
+				url: self.url,
+				favicon: self.apiresult.favicon,
+				ext: self.ext,
+				bitrate: self.bitrate,
+				hls: self.apiresult.hls,
+				tags: self.apiresult.tags,
+				votes: self.apiresult.votes,
+				lastcheckok: self.apiresult.lastcheckok,
+				homepage: self.apiresult.homepage
+			});
+			self.onData2(self.ffprobeBuffer, true);
+			delete self.ffprobeBuffer;
+		}
+
+		if (this.hlsBitrate) {
+			return done();
+		}
+
 		const ffprobe = cp.spawn("ffprobe", ["-"], { stdio: ['pipe', 'pipe', 'pipe'] });
 		let ffprobeRes = "";
 		ffprobe.stderr.on("data", function(ffdata) {
@@ -316,37 +361,32 @@ class StreamDl extends Readable {
 			ffdatasplit = ffdatasplit.filter(line => line.includes('Stream') && line.includes('Audio') && line.includes('kb/s'));
 			if (!ffdatasplit.length) return; // will wait for further data events containing useful payload
 			let linesplit = ffdatasplit[0].split(' ');
+
+			// bitrate
 			const i = linesplit.indexOf('kb/s') - 1;
 			if (linesplit.length < 2 || i < 0) {
 				log.warn(self.canonical + ' could not parse ffprobe result: ' + ffdatasplit[0] + '. keep bitrate=' + self.bitrate + ' bytes/s');
-				return done();
 			} else {
 				self.bitrate = Number(linesplit[i]) * 1000 / 8;
 				log.info(self.canonical + " ffprobe bitrate = " + self.bitrate + " bytes/s");
-				return done();
 			}
+
+			// codec
+			const j = linesplit.indexOf('Audio:') + 1;
+			if (j >= linesplit.length || j <= 0) {
+				log.warn(self.canonical + ' could not parse ffprobe result: ' + ffdatasplit[0] + '. keep ext=' + self.ext);
+			} else {
+				let codec = linesplit[j].split(',')[0]; // remove trailing comma, if any. With HLS streams, one may get: "Audio: aac (HE-AAC) ([15][0][0][0] / 0x000F),"
+				self.ext = consts.CODEC_FFPROBE_TRANSLATION[codec];
+				if (!consts.SUPPORTED_EXTENSIONS.includes(self.ext)) {
+					log.error(self.canonical + " codec " + codec + " is not supported");
+				} else {
+					log.info(self.canonical + " ffprobe codec = " + codec + " extension = " + self.ext);
+				}
+			}
+			return done();
 		});
 		ffprobe.stdin.end(this.ffprobeBuffer);
-
-		const done = function() {
-			self.ffprobeDone = true; // will not do ffprobe bitrate detection in the future
-			self.emit("metadata", {
-				country: self.country,
-				name: self.name,
-				url: self.url,
-				favicon: self.apiresult.favicon,
-				codec: self.codec,
-				ext: consts.SAVE_EXT[self.codec],
-				bitrate: self.bitrate,
-				hls: self.apiresult.hls,
-				tags: self.apiresult.tags,
-				votes: self.apiresult.votes,
-				lastcheckok: self.apiresult.lastcheckok,
-				homepage: self.apiresult.homepage
-			});
-			self.onData2(self.ffprobeBuffer, true);
-			delete self.ffprobeBuffer;
-		}
 	}
 
 	tBuffer() {
