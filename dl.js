@@ -399,7 +399,7 @@ class StreamDl extends Readable {
 	}
 
 	onData2(data, isFirstSegment) {
-		let newSegment = false || isFirstSegment;
+		let newSegment = isFirstSegment;
 		this.lastData = new Date();
 
 		const limitBytes = this.segDuration * this.bitrate;
@@ -429,11 +429,9 @@ class StreamDl extends Readable {
 			}
 
 			// send the remaining amount of bytes in a new segment
-			if (nSegs * limitBytes < data.length) {
-				this.receivedBytesInCurrentSegment = data.length - nSegs * limitBytes;
-				this.receivedBytes += data.length - nSegs * limitBytes;
-				this.push({ newSegment: true, tBuffer: this.tBuffer(), data: data.slice(nSegs*limitBytes) });
-			}
+			this.receivedBytesInCurrentSegment = data.length - nSegs * limitBytes;
+			this.receivedBytes += data.length - nSegs * limitBytes;
+			this.push({ newSegment: true, tBuffer: this.tBuffer(), data: data.slice(nSegs*limitBytes) });
 		}
 	}
 
