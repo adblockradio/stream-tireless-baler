@@ -162,6 +162,10 @@ class StreamDl extends Readable {
 			log.debug("startDl has been called with the wrong timestamp, abort. current=" + timestamp + " official=" + this.date);
 			return;
 		}
+		if (this.altreq && this.altreq.kill) {
+			this.altreq.kill();
+			log.debug(this.canonical + " curl child process killed");
+		}
 		this.date = new Date();
 		this.firstData = null;
 		this.lastData = new Date();
