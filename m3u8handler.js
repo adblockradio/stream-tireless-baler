@@ -26,7 +26,6 @@ const m3u8 = require("m3u8");
 const http = require("http");
 const https = require("https");
 const url = require("url");
-const fs = require("fs");
 const cp = require('child_process');
 
 var timeStamp = null;
@@ -137,10 +136,11 @@ const parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callbac
 }
 
 // parses the master playlist, that contains the url of the child playlist that will have to be regularly refreshed
-const parseMaster = function(masterUrl, bitrateCallback, playlistUrlCallback) {
+const parseMaster = function(masterUrl, headersCallback, bitrateCallback, playlistUrlCallback) {
 	var parser = m3u8.createStream();
 
 	var file = (url.parse(masterUrl).protocol == "http:" ? http : https).get(masterUrl, function (res) {
+		headersCallback(res.headers);
 		res.on("data", function(data) {
 			parser.write(data);
 		});
@@ -185,9 +185,9 @@ const parseMaster = function(masterUrl, bitrateCallback, playlistUrlCallback) {
 	});
 }
 
-module.exports = function(masterUrl, bitrateCallback, dataCallback) {
+module.exports = function(masterUrl, headersCallback, bitrateCallback, dataCallback) {
 	timeStamp = new Date(); // timeStamp helps having maximum one download at the same time.
-	parseMaster(masterUrl, bitrateCallback, function(playlistUrl) {
+	parseMaster(masterUrl, headersCallback, bitrateCallback, function(playlistUrl) {
 		parsePlaylist(playlistUrl, -1, timeStamp, dataCallback);
 	});
 

@@ -26,11 +26,8 @@ const { log } = require("abr-log")("dldemo");
 const Dl = require("./dl.js").StreamDl;
 
 const country = "France"; const name = "Radio Nova"; // example of classic HTTP stream
-//const country = "Spain"; const name = "RAC1"; // example of HTTP/0.9 stream
-//const country = "Italy"; const name = "Radio Capital"; // example of HLS stream
-//const country = "Belgium"; const name = "Zen FM"; // example of audio/x-scpls playlist parsed to find the final URL
 
-const dl = new Dl({ country: country, name: name, segDuration: 3 }); 
+const dl = new Dl({ country: country, name: name, segDuration: 3 });
 
 dl.on("metadata", function(data) {
 	log.info("metadata received\n" + JSON.stringify(data, null, "\t"));
@@ -145,6 +142,22 @@ setTimeout(function() {
 [2018-05-17T18:29:10.452Z] warn dl: 	France_Radio Nova server response has been closed (on demand)
 ```
 
+## Testing
+
+Test a sample of 10 radios with known varying features.
+```
+npm test
+```
+
+Test all radios supported by Adblock Radio:
+```
+./node_modules/mocha/bin/mocha test.js --test-all-radios --delay
+```
+
+Test a particular radio:
+```
+./node_modules/mocha/bin/mocha test.js --test-one-radio 'United States of America_NPR Program (AAC)' --delay
+```
 
 ## License
 MIT

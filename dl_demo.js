@@ -25,15 +25,7 @@
 const { log } = require("abr-log")("dldemo");
 const Dl = require("./dl.js").StreamDl;
 
-const country = "France"; const name = "Radio Nova";            // regular HTTP stream
-//const country = "France"; const name = "Djam Radio";            // stream where radio-browser.info gives no codec info;
-//const country = "France"; const name = "BFM Business";            // stream with many redirections
-//const country = "Spain"; const name = "Cadena 100";             // HTTP/0.9 stream
-//const country = "Italy"; const name = "Radio Capital";          // HLS stream
-//const country = "Belgium"; const name = "Zen FM";               // audio/x-scpls playlist parsed to find the final URL
-//const country = "Switzerland"; const name = "Basspistol (OGG)"; // OGG stream
-
-const dl = new Dl({ country: country, name: name, segDuration: 3 });
+const dl = new Dl({ country: "France", name: "Radio Nova", segDuration: 2 });
 
 dl.on("metadata", function(data) {
 	log.info("metadata received\n" + JSON.stringify(data, null, "\t"));
@@ -44,7 +36,13 @@ dl.on("headers", function(headers) {
 	log.info("stream headers\n" + JSON.stringify(headers, null, "\t"));
 });
 
+let receivedBytesInSegment = 0;
 dl.on("data", function(obj) {
+	if (obj.newSegment) {
+		log.debug("new segment begins. last segment contained " + receivedBytesInSegment + " bytes");
+		receivedBytesInSegment = 0;
+	}
+	receivedBytesInSegment += obj.data.length;
 	log.debug("received " + obj.data.length + " bytes. tBuffer=" + obj.tBuffer.toFixed(2) + "s. newSeg=" + obj.newSegment);
 });
 
@@ -55,5 +53,4 @@ dl.on("error", function(err) {
 setTimeout(function() {
 	log.info("stopping stream download.");
 	dl.stopDl();
-}, 40000);
-
+}, 6000);

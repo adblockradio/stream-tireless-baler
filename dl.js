@@ -89,10 +89,11 @@ const getRadioMetadata = function(country, name, callback) {
 			//log.info("getRadioMetadata: metadata received for " + country + "_" + name);
 			//log.debug("getRadioMetadata: metadata=" + JSON.stringify(results[i]));
 			if (!isNaN(results[i].bitrate) && results[i].bitrate > 0) {
-				results[i].bitrate = results[i].bitrate * 1000 / 8; // result in kbps
+				results[i].bitrate = results[i].bitrate * 1000 / 8; // result in kbps. convert to bytes per second
 			} else {
-				results[i].bitrate = 128000 / 8;
-				log.warn(country + "_" + name + " getRadioMetadata: API did not specify a bitrate. temporarily default to 128k");
+				results[i].bitrate = 0;
+				log.warn(country + "_" + name + " getRadioMetadata: no ICY bitrate available");
+				// we will use ffprobe instead, or read the HLS manifest if relevant
 			}
 			return callback(null, results[i]);
 		} else {
@@ -128,15 +129,18 @@ class StreamDl extends Readable {
 			}
 			const translatedCodec = consts.CODEC_API_TRANSLATION[result.codec];
 			if (!consts.SUPPORTED_EXTENSIONS.includes(translatedCodec)) {
-				log.warn(self.canonical + ": API returned a codec, " + result.codec + ", that is not supported");
+				log.error(self.canonical + ": API returned a codec, " + result.codec + ", that is not supported");
+				return self.emit("error", "API returned an unsupported codec");
 			} else if (!result.codec) {
 				log.warn(self.canonical + ": API returned an empty codec field");
+				return self.emit("error", "API returned an empty codec")
 			}
 			self.url = result.url;
 			self.origUrl = result.url;
 			self.ext = translatedCodec;
 			self.hls = result.codec === "HLS" || result.hls === "1";
 			self.bitrate = result.bitrate;
+			self.apiBitrate = result.bitrate;
 			self.apiresult = result;
 			self.startDl(null);
 		});
@@ -159,7 +163,7 @@ class StreamDl extends Readable {
 
 		log.debug(this.canonical + " start dl url= " + this.url + " ext " + this.ext + " bitrate expected to be " + this.bitrate);
 		if (this.date && timestamp && timestamp != this.date) {
-			log.debug("startDl has been called with the wrong timestamp, abort. current=" + timestamp + " official=" + this.date);
+			log.debug(this.canonical + " startDl has been called with the wrong timestamp, abort. current=" + timestamp + " official=" + this.date);
 			return;
 		}
 		if (this.altreq && this.altreq.kill) {
@@ -183,10 +187,16 @@ class StreamDl extends Readable {
 
 		// special handler for HLS streams
 		if (this.hls) {
-			return this.req = m3u8handler(urlParsed, function(bitrate) {
-				log.debug("update bitrate to " + bitrate);
+			return this.req = m3u8handler(urlParsed, function(headers) {
+				self.emit("headers", headers);
+			}, function(bitrate) {
+				log.debug(self.canonical + " according to hls manifest, bitrate is " + bitrate + " bytes / s");
+				if (self.bitrate) {
+					log.debug(self.canonical + " overwrite the original bitrate " + self.bitrate + " bytes / s");
+				}
 				self.bitrate = bitrate;
-				self.hlsBitrate = true; // useless to call ffprobe if the bitrate is known reliably
+				self.hlsBitrate = bitrate;
+				self.hlsKnownBitrate = true; // useless to call ffprobe if the bitrate is known reliably
 			}, function(data, delay) {
 				// hls blocks may provide data in too big blocks. inject it progressively in the analysis flow
 				self.onData(data);
@@ -228,8 +238,8 @@ class StreamDl extends Readable {
 					playlistContents += data;
 				});
 				self.res.on('end', function() {
-					//log.debug(self.canonical + " received the following playlist:\n" + playlistContents);
-					var lines = playlistContents.split("\n");
+					var lines = playlistContents.replace(/\r/g, '').split("\n");
+					//log.debug(self.canonical + " received the following playlist (" + lines.length + " lines):\n" + playlistContents);
 					var newUrlFound = false;
 					for (var i=lines.length-1; i>=0; i--) {
 						if (isM3U && lines[i].slice(0, 4) == "http") {          // audio/x-mpegurl
@@ -271,9 +281,10 @@ class StreamDl extends Readable {
 				});
 
 				self.res.on('close', function() {
-					log.warn(self.canonical + " server response has been closed" + (self.toBeDestroyed ? " (on demand)" : ""));
-					self.req.abort();
-					if (!self.toBeDestroyed) {
+					if (self.toBeDestroyed) {
+						log.info(self.canonical + " server response has been closed (on demand)");
+					} else {
+						log.warn(self.canonical + " server response has been unexpectedly closed.");
 						(function(timestamp) { setTimeout(function() { self.startDl(timestamp); }, 5000); })(self.date);
 					}
 				});
@@ -350,7 +361,7 @@ class StreamDl extends Readable {
 			delete self.ffprobeBuffer;
 		}
 
-		if (this.hlsBitrate) {
+		if (this.hlsKnownBitrate) {
 			return done();
 		}
 
@@ -369,10 +380,21 @@ class StreamDl extends Readable {
 			// bitrate
 			const i = linesplit.indexOf('kb/s') - 1;
 			if (linesplit.length < 2 || i < 0) {
-				log.warn(self.canonical + ' could not parse ffprobe result: ' + ffdatasplit[0] + '. keep bitrate=' + self.bitrate + ' bytes/s');
+				if (self.bitrate) {
+					log.warn(self.canonical + ' could not parse ffprobe result: ' + ffdatasplit[0] + '. keep bitrate=' + self.bitrate + ' bytes/s');
+				} else {
+					log.error(self.canonical + ' could not parse ffprobe result: ' + ffdatasplit[0] + ' no bitrate could be determined.')
+				}
 			} else {
-				self.bitrate = Number(linesplit[i]) * 1000 / 8;
-				log.info(self.canonical + " ffprobe bitrate = " + self.bitrate + " bytes/s");
+				const ffprobeBitrate = Number(linesplit[i]) * 1000 / 8;
+				log.info(self.canonical + " ffprobe bitrate = " + ffprobeBitrate + " bytes/s");
+				self.ffprobeBitrate = ffprobeBitrate;
+				if (!self.bitrate) {
+					log.debug(self.canonical + " use that one");
+					self.bitrate = ffprobeBitrate;
+				} else {
+					log.debug(self.canonical + " keep the original bitrate " + self.bitrate);
+				}
 			}
 
 			// codec
@@ -410,6 +432,21 @@ class StreamDl extends Readable {
 
 		if (!limitBytes || this.receivedBytesInCurrentSegment + data.length < limitBytes) {
 
+			// TODO BUG
+			/*
+			.../stream-tireless-baler/dl.js:411
+			if (!limitBytes || this.receivedBytesInCurrentSegment + data.length < limitBytes) {
+			                                                             ^
+
+			TypeError: Cannot read property 'length' of undefined
+				at StreamDl.onData2 (.../stream-tireless-baler/dl.js:411:64)
+				at done (.../stream-tireless-baler/dl.js:349:9)
+				at Socket.<anonymous> (.../stream-tireless-baler/dl.js:391:11)
+				at Socket.emit (events.js:187:15)
+				at endReadableNT (_stream_readable.js:1094:12)
+				at process._tickCallback (internal/process/next_tick.js:63:19)
+			*/
+
 			this.receivedBytesInCurrentSegment += data.length;
 			this.receivedBytes += data.length;
 			this.push({ newSegment: newSegment, tBuffer: this.tBuffer(), data: data });
@@ -444,15 +481,17 @@ class StreamDl extends Readable {
 		if (this.req && this.req.abort) {
 			this.req.abort();
 			log.debug(this.canonical + " http request aborted on demand");
+			delete this.req;
 		}
 		if (this.altreq && this.altreq.kill) {
 			this.altreq.kill();
 			log.debug(this.canonical + " curl child process killed");
+			delete this.altreq;
 		}
 	}
 
 	_read() {
-
+		// pass
 	}
 }
 
