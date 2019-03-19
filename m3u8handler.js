@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+"use strict";
+
 const { log } = require("abr-log")("dl/m3u8handler");
 const m3u8 = require("m3u8");
 //var m3u8stream = require("m3u8stream"); // that was buggy when tested
@@ -84,7 +86,8 @@ const parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callbac
 			var urlsToIgnore = sequence - 1 - lastSegment;
 
 			for (var i=lines.length-1; i>=0; i--) {
-				if (lines[i].slice(0, 7) === "http://" || lines[i].slice(lines[i].length-3, lines[i].length) == ".ts") {
+				const line = lines[i].split("?")[0]; // remove query parameters
+				if (line.slice(0, 4) === "http" || line.slice(line.length-3, line.length) === ".ts") {
 					if (urlsToIgnore > 0) {
 						urlsToIgnore--;
 					} else if (urlsToIgnore == 0) {
@@ -107,7 +110,7 @@ const parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callbac
 					res.pipe(converter.stdin);
 					converter.stdout.on("data", function(data) {
 						//log.debug("ffmpeg sent " + data.length + " bytes");
-						hlsData = (hlsData ? Buffer.concat([hlsData, data]) : new Buffer(data))
+						hlsData = (hlsData ? Buffer.concat([hlsData, data]) : Buffer.from(data))
 					});
 					converter.stdout.on("end", function() {
 						if (remainingData && remainingData.length > 0) {

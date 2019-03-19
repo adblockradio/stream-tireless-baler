@@ -127,10 +127,15 @@ class StreamDl extends Readable {
 				log.warn(self.canonical + " problem fetching radio info: " + err);
 				return self.emit("error", "problem fetching radio info: " + err);
 			}
-			const translatedCodec = consts.CODEC_API_TRANSLATION[result.codec];
+			let translatedCodec = consts.CODEC_API_TRANSLATION[result.codec];
 			if (!consts.SUPPORTED_EXTENSIONS.includes(translatedCodec)) {
-				log.error(self.canonical + ": API returned a codec, " + result.codec + ", that is not supported");
-				return self.emit("error", "API returned an unsupported codec");
+				if (result.codec === "UNKNOWN") {
+					log.warn(self.canonical + ": API gives " + result.codec + " codec. Will use ffprobe to determine it.");
+					translatedCodec = "UNKNOWN";
+				} else {
+					log.error(self.canonical + ": API returned a codec, " + result.codec + ", that is not supported");
+					return self.emit("error", "API returned an unsupported codec");
+				}
 			} else if (!result.codec) {
 				log.warn(self.canonical + ": API returned an empty codec field");
 				return self.emit("error", "API returned an empty codec")
@@ -327,7 +332,7 @@ class StreamDl extends Readable {
 	// get a reliable value of bitrate, so that tBuffer can be correctly estimated
 	// done before the first data is emitted.
 	onData(data) {
-		if (this.firstData == null) {
+		if (this.firstData === null) {
 			this.firstData = new Date();
 			log.info(this.canonical + " first data received at " + this.firstData);
 		}
@@ -361,7 +366,7 @@ class StreamDl extends Readable {
 			delete self.ffprobeBuffer;
 		}
 
-		if (this.hlsKnownBitrate) {
+		if (this.hlsKnownBitrate && this.ext !== "UNKNOWN") {
 			return done();
 		}
 

@@ -5,6 +5,7 @@ const axios = require("axios");
 const LIST_URL = "https://www.adblockradio.com/models/list.json";
 const DL_DURATION = 5; // in seconds
 const SEG_DURATION = 2; // in seconds
+const SUPPORTED_EXTENSIONS = [ "mp3", "aac", "ogg" ];
 
 let radios = [
 	{ country: "France", name: "Radio Nova" },            // regular HTTP stream
@@ -121,6 +122,7 @@ if (paramIndex >= 0 && process.argv.length >= paramIndex + 2) {
 						assert(metadataReceived.url);
 						assert(metadataReceived.favicon);
 						assert(metadataReceived.ext);
+						assert(SUPPORTED_EXTENSIONS.includes(metadataReceived.ext));
 						assert(metadataReceived.bitrate);
 						assert(metadataReceived.hls); // "0" or "1", strings, so should be trueish
 						assert(metadataReceived.votes);
