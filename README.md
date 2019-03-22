@@ -3,6 +3,8 @@ Universal and failsafe radio stream downloader as a Node Readable module
 
 This module is part of the [Adblock Radio](https://www.adblockradio.com) project.
 
+Build status: [![CircleCI](https://circleci.com/gh/adblockradio/stream-tireless-baler.svg?style=svg)](https://circleci.com/gh/adblockradio/stream-tireless-baler)
+
 ## Description
 
 - you give a radio name, it fetches metadata using [radio-browser.info API](http://www.radio-browser.info/gui/#/)
@@ -17,7 +19,7 @@ This module is part of the [Adblock Radio](https://www.adblockradio.com) project
 ```bash
 npm install stream-tireless-baler
 ```
-Your system needs those packages: [curl](https://curl.haxx.se/download.html) and [ffmpeg](https://ffmpeg.org/)
+Your system needs those packages: [curl](https://curl.haxx.se/download.html) and [ffmpeg](https://ffmpeg.org/).
 
 ## Usage
 
@@ -144,7 +146,7 @@ setTimeout(function() {
 
 ## Testing
 
-Test a sample of 10 radios with known varying features.
+Test a sample of ~10 radios with known varying features.
 ```
 npm test
 ```
@@ -160,4 +162,5 @@ Test a particular radio:
 ```
 
 ## License
+
 MIT
