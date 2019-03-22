@@ -18,6 +18,7 @@ let radios = [
 	{ country: "Switzerland", name: "Basspistol (OGG)" }, // OGG stream
 	{ country: "Italy", name: "RTL 102.5" },
 	{ country: "New Zealand", name: "Radio Hauraki" },    // low bitrate, ffprobe is often wrong
+	{ country: "United States of America", name: "NPR Program" }, // Another HLS stream
 ];
 
 const TEST_ALL_RADIOS = process.argv.includes("--test-all-radios");

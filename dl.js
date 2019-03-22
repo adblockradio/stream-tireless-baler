@@ -184,7 +184,10 @@ class StreamDl extends Readable {
 		this.ffprobeLock = false; // boolean to indicate whether ffprobe is (asynchronously) determining the bitrate
 		this.ffprobeDone = false; // boolean to indicate that ffprobe bitrate has already been read
 
-		if (this.req) this.req.abort();
+		if (this.req) {
+			log.warn(this.canonical + " a previous request is currently running. abort it.");
+			this.req.abort();
+		}
 
 		setTimeout(function() { self.checkAlive(self.date); }, 5000);
 

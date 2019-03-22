@@ -58,7 +58,7 @@ const incrementalEmitter = function(size, delay, origin, emitter) {
 // parses the m3u8 child playlist, that contains the list of audio files that changes over time.
 const parsePlaylist = function(playlistUrl, lastSegment, localTimeStamp, callback) {
 	//log.debug("get playlist given last segment=" + lastSegment);
-	if (timeStamp == "stop") return log.info("stream download abort");
+	if (timeStamp === "stop") return log.info("stream download abort");
 	if (timeStamp !== localTimeStamp) return log.warn("timestamp mismatch. hls download aborted");
 
 	(url.parse(playlistUrl).protocol == "http:" ? http : https).get(playlistUrl, function (res) {
