@@ -179,11 +179,7 @@ if (paramIndex >= 0 && process.argv.length >= paramIndex + 2) {
 					});
 
 					it('should stop properly', function() {
-						/*assert(dl.toBeDestroyed);
-						assert.equal(dl.req, undefined);
-						assert.equal(dl.altreq, undefined);*/
-						assert(dl.worker);
-						assert(dl.worker.exited);
+						assert(!dl.worker);
 					});
 
 				});

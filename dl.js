@@ -129,7 +129,7 @@ class StreamDl extends Readable {
 						self.emit("error", "API returned an empty codec")
 						return reject();
 					}
-					self.url = result.url;
+					if (!self.url) self.url = result.url;
 					self.origUrl = result.url;
 					self.ext = translatedCodec;
 					self.hls = result.codec === "HLS" || result.hls === "1";
