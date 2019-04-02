@@ -8,10 +8,6 @@ jobs:
     docker:
       - image: adblockradio/adblockradio-docker-primary:0.0.2
 
-    branches:
-      only:
-        - master
-
     steps:
       - checkout
 
