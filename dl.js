@@ -24,11 +24,8 @@
 
 const { Readable } = require('stream');
 const { log } = require("abr-log")("dl");
-const url = require("url");
-const m3u8handler = require("./m3u8handler.js");
-const http = require("http");
-const https = require("https");
-const cp = require('child_process');
+const axios = require('axios');
+const cp = require("child_process");
 
 const consts = {
 	SUPPORTED_EXTENSIONS: [
@@ -51,39 +48,18 @@ const consts = {
 	API_PATH: "http://www.radio-browser.info/webservice/json/stations/bynameexact/"
 }
 
-// helper function to download a (finite) file
-const _get = function(exturl, callback) {
-	var parsedUrl = url.parse(exturl);
-	parsedUrl.withCredentials = false;
-	var request = (parsedUrl.protocol == "https:" ? https : http).request(parsedUrl, function(res) {
-		var corsEnabled = res.headers["access-control-allow-origin"] === "*";
-		var result = ""
-		res.on('data', function(chunk) {
-			result += chunk;
-		});
-		res.on('end', function() {
-			return callback(null, result, corsEnabled);
-		});
-	}).on("error", function(e) {
-		return callback(e.message, null, null);
-	});
-	request.end();
-}
-
 // function that calls an API to get metadata about a radio
 const getRadioMetadata = function(country, name, callback) {
-	_get(consts.API_PATH + encodeURIComponent(name), function(err, result) { //, corsEnabled
-		if (err || !result) {
-			return callback(err, null);
-		}
 
-		try {
-			var results = JSON.parse(result);
-		} catch(e) {
-			return callback(e.message, null);
-		}
+	axios.get(consts.API_PATH + encodeURIComponent(name)).then(function(response) {
 
-		const i = results.map(e => e.country).indexOf(country);
+		//try {
+		var results = response.data;
+		var i = results.map(e => e.country).indexOf(country);
+		/*} catch (e) {
+			log.error("getRadioMetadata: problem parsing response. err=" + e);
+			return callback(e, null);
+		}*/
 
 		if (i >= 0) {
 			//log.info("getRadioMetadata: metadata received for " + country + "_" + name);
@@ -100,6 +76,9 @@ const getRadioMetadata = function(country, name, callback) {
 			log.error("getRadioMetadata: radio not found: " + results);
 			return callback(null, null);
 		}
+	}).catch(function(e) {
+		log.warn("getRatioMetadata: request error. err=" + e);
+		return callback(e, null);
 	});
 }
 
@@ -121,306 +100,145 @@ class StreamDl extends Readable {
 		this.segDuration = options.segDuration;
 		this.buffer = 0;
 
-		var self = this;
-		getRadioMetadata(this.country, this.name, function(err, result) {
-			if (err || !result) {
-				log.warn(self.canonical + " problem fetching radio info: " + err);
-				return self.emit("error", "problem fetching radio info: " + err);
+
+		this.startDl();
+	}
+
+	async refreshMetadata() {
+		const self = this;
+		return new Promise(function(resolve, reject) {
+			try {
+				getRadioMetadata(self.country, self.name, function(err, result) {
+					if (err || !result) {
+						log.warn(self.canonical + " problem fetching radio info: " + err);
+						self.emit("error", "problem fetching radio info: " + err);
+						return reject();
+					}
+					let translatedCodec = consts.CODEC_API_TRANSLATION[result.codec];
+					if (!consts.SUPPORTED_EXTENSIONS.includes(translatedCodec)) {
+						if (result.codec === "UNKNOWN" || result.codec === "") {
+							log.warn(self.canonical + ": API gives " + result.codec + " codec. Will use ffprobe to determine it.");
+							translatedCodec = "UNKNOWN";
+						} else {
+							log.error(self.canonical + ": API returned a codec, " + result.codec + ", that is not supported");
+							self.emit("error", "API returned an unsupported codec");
+							return reject();
+						}
+					} else if (!result.codec) {
+						log.warn(self.canonical + ": API returned an empty codec field");
+						self.emit("error", "API returned an empty codec")
+						return reject();
+					}
+					if (!self.url) self.url = result.url;
+					self.origUrl = result.url;
+					self.ext = translatedCodec;
+					self.hls = result.codec === "HLS" || result.hls === "1";
+					self.bitrate = result.bitrate;
+					self.apiBitrate = result.bitrate;
+					self.apiresult = result;
+					resolve();
+				});
+			} catch (e) {
+				log.error(self.canonical + " error getting radio metadata. err=" + e);
+				reject();
 			}
-			let translatedCodec = consts.CODEC_API_TRANSLATION[result.codec];
-			if (!consts.SUPPORTED_EXTENSIONS.includes(translatedCodec)) {
-				if (result.codec === "UNKNOWN") {
-					log.warn(self.canonical + ": API gives " + result.codec + " codec. Will use ffprobe to determine it.");
-					translatedCodec = "UNKNOWN";
-				} else {
-					log.error(self.canonical + ": API returned a codec, " + result.codec + ", that is not supported");
-					return self.emit("error", "API returned an unsupported codec");
-				}
-			} else if (!result.codec) {
-				log.warn(self.canonical + ": API returned an empty codec field");
-				return self.emit("error", "API returned an empty codec")
-			}
-			self.url = result.url;
-			self.origUrl = result.url;
-			self.ext = translatedCodec;
-			self.hls = result.codec === "HLS" || result.hls === "1";
-			self.bitrate = result.bitrate;
-			self.apiBitrate = result.bitrate;
-			self.apiresult = result;
-			self.startDl(null);
 		});
 	}
 
-	checkAlive(requestDate) {
-		if (requestDate != this.date || this.toBeDestroyed) return;
-
-		if (new Date() - this.lastData > 10000) {
-			log.info(this.canonical + " stream seems idle, we restart it");
-			this.startDl(null);
-		} else {
-			var self = this;
-			setTimeout(function() { self.checkAlive(requestDate); }, 4000);
-		}
-	}
-
-	startDl(timestamp) {
-		var self = this;
-
-		log.debug(this.canonical + " start dl url= " + this.url + " ext " + this.ext + " bitrate expected to be " + this.bitrate);
-		if (this.date && timestamp && timestamp != this.date) {
-			log.debug(this.canonical + " startDl has been called with the wrong timestamp, abort. current=" + timestamp + " official=" + this.date);
-			return;
-		}
-		if (this.altreq && this.altreq.kill) {
-			this.altreq.kill();
-			log.debug(this.canonical + " curl child process killed");
-		}
-		this.date = new Date();
-		this.firstData = null;
-		this.lastData = new Date();
-		this.receivedBytes = 0;
-		this.receivedBytesInCurrentSegment = 0;
-		this.res = null;
-		this.ffprobeLock = false; // boolean to indicate whether ffprobe is (asynchronously) determining the bitrate
-		this.ffprobeDone = false; // boolean to indicate that ffprobe bitrate has already been read
-
-		if (this.req) {
-			log.warn(this.canonical + " a previous request is currently running. abort it.");
-			this.req.abort();
-		}
-
-		setTimeout(function() { self.checkAlive(self.date); }, 5000);
-
-		var urlParsed = url.parse(this.url);
-
-		// special handler for HLS streams
-		if (this.hls) {
-			return this.req = m3u8handler(urlParsed, function(headers) {
-				self.emit("headers", headers);
-			}, function(bitrate) {
-				log.debug(self.canonical + " according to hls manifest, bitrate is " + bitrate + " bytes / s");
-				if (self.bitrate) {
-					log.debug(self.canonical + " overwrite the original bitrate " + self.bitrate + " bytes / s");
-				}
-				self.bitrate = bitrate;
-				self.hlsBitrate = bitrate;
-				self.hlsKnownBitrate = true; // useless to call ffprobe if the bitrate is known reliably
-			}, function(data, delay) {
-				// hls blocks may provide data in too big blocks. inject it progressively in the analysis flow
-				self.onData(data);
-			});
-		}
-
-		//log.debug(JSON.stringify(urlloc));
-		this.req = (urlParsed.protocol == "http:" ? http : https).get(urlParsed, function (res) {
-			self.res = res;
-			log.debug(self.canonical + " got response code " + res.statusCode + " and content-type " + res.headers["content-type"]);
-			self.emit("headers", res.headers);
-
-			res.resume();
-
-			// management of common connection problems that may occur
-			if (res.statusCode == 404) {
-				self.stopDl();
-				return this.emit("error", "404");
-			} else if (res.headers["www-authenticate"] || res.statusCode == 500 || res.statusCode == 502) {
-				// request fail... restart required. e.g. fr_ouifm {"www-authenticate":"Basic realm=\"Icecast 2.3.3-kh9\""}
-				// 404 {"server":"nginx/1.2.1","date":"Wed, 07 Sep 2016 08:48:53 GMT","content-type":"text/html","connection":"close"}
-				(function(timestamp) { setTimeout(function() { self.startDl(timestamp); }, 10000); })(self.date);
-				self.req.abort();
-				return;
-			} else if ((res.statusCode == 301 || res.statusCode == 302) && res.headers["location"]) { //  && res.headers["connection"] == "close"
-				// redirect e.g. fr_nrj {"server":"Apache-Coyote/1.1","set-cookie":["JSESSIONID=F41DB621F21B84920E2F7F0E92209B67; Path=/; HttpOnly"],
-				// "location":"http://185.52.127.132/fr/30001/mp3_128.mp3","content-length":"0","date":"Wed, 13 Jul 2016 08:08:09 GMT","connection":"close"}
-				self.url = res.headers.location;
-				log.info(self.canonical + " following redirection to " + self.url);
-				self.req.abort();
-				self.startDl(null);
-				return;
-			} else if (["audio/x-mpegurl", "audio/x-scpls; charset=UTF-8", "audio/x-scpls", "video/x-ms-asf"].indexOf(res.headers["content-type"]) >= 0) { // M3U, PLS or ASF playlist
-				log.debug(self.canonical + " url is that of a playlist. content-type=" + res.headers["content-type"] +". read it");
-				var playlistContents = "";
-				var isM3U = res.headers["content-type"] == "audio/x-mpegurl";
-				var isASF = res.headers["content-type"] == "video/x-ms-asf";
-				self.res.on('data', function(data) {
-					playlistContents += data;
-				});
-				self.res.on('end', function() {
-					var lines = playlistContents.replace(/\r/g, '').split("\n");
-					//log.debug(self.canonical + " received the following playlist (" + lines.length + " lines):\n" + playlistContents);
-					var newUrlFound = false;
-					for (var i=lines.length-1; i>=0; i--) {
-						if (isM3U && lines[i].slice(0, 4) == "http") {          // audio/x-mpegurl
-							self.url = lines[i];
-							newUrlFound = true;
-							break;
-						} else if (isASF) {                                     // video/x-ms-asf
-							var p1 = lines[i].indexOf("<REF HREF=\"");
-							if (p1 < 0) continue
-							if (lines[i].slice(p1+11, p1+15) == "http") {
-								self.url = lines[i].slice(p1+11).split("\"")[0];
-								newUrlFound = true;
-								break;
-							}
-						} else if (!isM3U && !isASF) {                          // audio/x-scpls
-							var p1 = lines[i].indexOf("=");
-							if (p1 < 0) continue
-							if (lines[i].slice(p1+1, p1+5) == "http") {
-								self.url = lines[i].slice(p1+1);
-								newUrlFound = true;
-								break;
-							}
-						}
-					}
-					if (newUrlFound) {
-						self.startDl(null)
-					} else {
-						log.error(self.canonical + " could not parse playlist");
-						log.debug(playlistContents);
-						return self.emit("error", "could not parse playlist"); //predictionCallback(42, null, stream.getStatus());
-					}
-				});
-
-			} else if (res.statusCode != 200) {
-				(function(timestamp) { setTimeout(function() { self.startDl(timestamp); }, 2000); })(self.date);
-			} else {
-				self.res.on('data', function(data) {
-					self.onData(data);
-				});
-
-				self.res.on('close', function() {
-					if (self.toBeDestroyed) {
-						log.info(self.canonical + " server response has been closed (on demand)");
-					} else {
-						log.warn(self.canonical + " server response has been unexpectedly closed.");
-						(function(timestamp) { setTimeout(function() { self.startDl(timestamp); }, 5000); })(self.date);
-					}
-				});
-			}
-		});
-
-		this.req.on('error', function(e) {
-			if (e.message == "Parse Error") {
-				// node is unable to download HTTP data without headers.
-				log.info(self.canonical + ' seems to follow HTTP/0.9 spec. retry with curl');
-				self.altreq = cp.spawn("curl", ["-L", self.url], { stdio: ['pipe', 'pipe', 'pipe'] });
-				return self.altreq.stdout.on("data", function(data) {
-					self.onData(data);
-				});
-			}
-
-			log.error(self.canonical + ' problem with request: ' + e.message);
-			(function(timestamp) {
-				setTimeout(function() {
-					getRadioMetadata(self.country, self.name, function(err, result) {
-						if (err) {
-							log.warn(self.canonical + " problem fetching radio info: " + err);
-						}
-
-						// URL has been updated in the metadata database
-						if (result != null && self.url != result.url) {
-							log.warn(self.canonical + " URL updated from " + self.url + " to " + result.url);
-							log.warn(self.canonical + " original url was " + self.origUrl);
-							self.url = result.url;
-							self.origUrl = result.url;
-							if (result.bitrate) self.bitrate = result.bitrate;
-						}
-						self.startDl(timestamp);
-					});
-				}, 5000);
-			})(self.date);
-		});
-	}
-
-	// get a reliable value of bitrate, so that tBuffer can be correctly estimated
-	// done before the first data is emitted.
-	onData(data) {
-		if (this.firstData === null) {
-			this.firstData = new Date();
-			log.info(this.canonical + " first data received at " + this.firstData);
-		}
-
-		if (this.ffprobeDone) return this.onData2(data, false);
-
-		this.ffprobeBuffer = this.ffprobeBuffer ? Buffer.concat([this.ffprobeBuffer, data]) : data;
-
-		if (this.ffprobeBuffer.length < 16000 || this.ffprobeLock) return;
-
-		this.ffprobeLock = true;
-
+	startDl() {
 		const self = this;
 
-		const done = function() {
-			self.ffprobeDone = true; // will not do ffprobe bitrate detection in the future
-			self.emit("metadata", {
-				country: self.country,
-				name: self.name,
-				url: self.url,
-				favicon: self.apiresult.favicon,
-				ext: self.ext,
-				bitrate: self.bitrate,
-				hls: self.apiresult.hls,
-				tags: self.apiresult.tags,
-				votes: self.apiresult.votes,
-				lastcheckok: self.apiresult.lastcheckok,
-				homepage: self.apiresult.homepage
+		(async function() {
+			await self.stopDl();
+
+			self.firstData = null;
+			self.lastData = new Date();
+			self.receivedBytes = 0;
+			self.receivedBytesInCurrentSegment = 0;
+
+			self.checkInterval = setInterval(function() {
+				if (+new Date() - self.lastData > 10000) {
+					log.info(self.canonical + " stream seems idle, we restart it");
+					self.startDl();
+				}
+			}, 5000);
+
+			try {
+				await self.refreshMetadata();
+			} catch (e) {
+				return;
+			}
+
+			self.worker = cp.fork(__dirname + "/worker.js", { //new Worker(__dirname + "/worker.js", {
+				//workerData: {
+				env: {
+					country: self.country,
+					name: self.name,
+					url: self.url,
+					hls: self.hls,
+					ext: self.ext,
+					bitrate: self.bitrate,
+					consts: JSON.stringify(consts),
+				}
 			});
-			self.onData2(self.ffprobeBuffer, true);
-			delete self.ffprobeBuffer;
-		}
 
-		if (this.hlsKnownBitrate && this.ext !== "UNKNOWN") {
-			return done();
-		}
+			self.worker.on("message", function(msg) {
+				if (msg.type === "headers") {
+					log.debug(self.canonical + " will emit headers");
+					self.emit("headers", msg.headers);
 
-		const ffprobe = cp.spawn("ffprobe", ["-"], { stdio: ['pipe', 'pipe', 'pipe'] });
-		let ffprobeRes = "";
-		ffprobe.stderr.on("data", function(ffdata) {
-			ffprobeRes += ffdata;
-		});
-		ffprobe.stderr.on("end", function() {
-			//log.debug("ffprobe stderr data=" + ffprobeRes);
-			let ffdatasplit = ("" + ffprobeRes).split('\n');
-			ffdatasplit = ffdatasplit.filter(line => line.includes('Stream') && line.includes('Audio') && line.includes('kb/s'));
-			if (!ffdatasplit.length) return; // will wait for further data events containing useful payload
-			let linesplit = ffdatasplit[0].split(' ');
+				} else if (msg.type === "metadata") {
+					log.debug(self.canonical + " will emit metadata");
+					self.emit("metadata", {
+						country: self.country,
+						name: self.name,
+						url: self.url,
+						favicon: self.apiresult.favicon,
+						ext: self.ext,
+						bitrate: self.bitrate,
+						hls: self.apiresult.hls,
+						tags: self.apiresult.tags,
+						votes: self.apiresult.votes,
+						lastcheckok: self.apiresult.lastcheckok,
+						homepage: self.apiresult.homepage
+					});
 
-			// bitrate
-			const i = linesplit.indexOf('kb/s') - 1;
-			if (linesplit.length < 2 || i < 0) {
-				if (self.bitrate) {
-					log.warn(self.canonical + ' could not parse ffprobe result: ' + ffdatasplit[0] + '. keep bitrate=' + self.bitrate + ' bytes/s');
+				} else if (msg.type === "data") {
+					msg.data = Buffer.from(msg.data);
+					log.debug(self.canonical + " received " + msg.data.length + " bytes");
+					self.onData2(msg.data, msg.isFirstSegment);
+
+				} else if (msg.type === "bitrate") {
+					log.info(self.canonical + " bitrate updated to " + msg.bitrate);
+					self.bitrate = msg.bitrate;
+
+				} else if (msg.type === "ext") {
+					log.info(self.canonical + " ext updated to " + msg.ext);
+					self.ext = msg.ext;
+
+				} else if (msg.type === "url") {
+					log.info(self.canonical +  " url updated to " + msg.url);
+					self.url = msg.url;
+					self.startDl(); // immediately restart the request
+
 				} else {
-					log.error(self.canonical + ' could not parse ffprobe result: ' + ffdatasplit[0] + ' no bitrate could be determined.')
+					log.warn(self.canonical + " message not recognized. type=" + msg.type);
 				}
-			} else {
-				const ffprobeBitrate = Number(linesplit[i]) * 1000 / 8;
-				log.info(self.canonical + " ffprobe bitrate = " + ffprobeBitrate + " bytes/s");
-				self.ffprobeBitrate = ffprobeBitrate;
-				if (!self.bitrate) {
-					log.debug(self.canonical + " use that one");
-					self.bitrate = ffprobeBitrate;
-				} else {
-					log.debug(self.canonical + " keep the original bitrate " + self.bitrate);
-				}
-			}
+			});
 
-			// codec
-			const j = linesplit.indexOf('Audio:') + 1;
-			if (j >= linesplit.length || j <= 0) {
-				log.warn(self.canonical + ' could not parse ffprobe result: ' + ffdatasplit[0] + '. keep ext=' + self.ext);
-			} else {
-				let codec = linesplit[j].split(',')[0]; // remove trailing comma, if any. With HLS streams, one may get: "Audio: aac (HE-AAC) ([15][0][0][0] / 0x000F),"
-				self.ext = consts.CODEC_FFPROBE_TRANSLATION[codec];
-				if (!consts.SUPPORTED_EXTENSIONS.includes(self.ext)) {
-					log.error(self.canonical + " codec " + codec + " is not supported");
-				} else {
-					log.info(self.canonical + " ffprobe codec = " + codec + " extension = " + self.ext);
-				}
-			}
-			return done();
-		});
-		ffprobe.stdin.end(this.ffprobeBuffer);
+			self.worker.once("error", function(err) {
+				log.error(self.canonical + " thread had error " + err);
+				// thread will restart by itself with "checkInterval" function
+
+			});
+
+			self.worker.exited = false;
+			self.worker.once("exit", function() {
+				log.debug(self.canonical + " thread exited");
+				self.worker = null;
+			});
+		})();
+
 	}
 
 	tBuffer() {
@@ -433,27 +251,17 @@ class StreamDl extends Readable {
 	}
 
 	onData2(data, isFirstSegment) {
-		let newSegment = isFirstSegment;
+		if (this.firstData === null) {
+			this.firstData = new Date();
+			log.info(this.canonical + " first data received at " + this.firstData);
+		}
 		this.lastData = new Date();
+
+		let newSegment = isFirstSegment;
 
 		const limitBytes = this.segDuration * this.bitrate;
 
 		if (!limitBytes || this.receivedBytesInCurrentSegment + data.length < limitBytes) {
-
-			// TODO BUG
-			/*
-			.../stream-tireless-baler/dl.js:411
-			if (!limitBytes || this.receivedBytesInCurrentSegment + data.length < limitBytes) {
-			                                                             ^
-
-			TypeError: Cannot read property 'length' of undefined
-				at StreamDl.onData2 (.../stream-tireless-baler/dl.js:411:64)
-				at done (.../stream-tireless-baler/dl.js:349:9)
-				at Socket.<anonymous> (.../stream-tireless-baler/dl.js:391:11)
-				at Socket.emit (events.js:187:15)
-				at endReadableNT (_stream_readable.js:1094:12)
-				at process._tickCallback (internal/process/next_tick.js:63:19)
-			*/
 
 			this.receivedBytesInCurrentSegment += data.length;
 			this.receivedBytes += data.length;
@@ -484,17 +292,13 @@ class StreamDl extends Readable {
 		}
 	}
 
-	stopDl() {
-		this.toBeDestroyed = true; // disables safety nets that restart the dl
-		if (this.req && this.req.abort) {
-			this.req.abort();
-			log.debug(this.canonical + " http request aborted on demand");
-			delete this.req;
+	async stopDl() {
+		if (this.checkInterval) {
+			clearInterval(this.checkInterval); // disable safety nets that restart the dl
 		}
-		if (this.altreq && this.altreq.kill) {
-			this.altreq.kill();
-			log.debug(this.canonical + " curl child process killed");
-			delete this.altreq;
+		if (this.worker) {
+			this.worker.kill();
+			delete this.worker;
 		}
 	}
 

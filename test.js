@@ -1,6 +1,8 @@
+"use strict";
+
 const assert = require("assert").strict;
 const { log } = require("abr-log")("test");
-const Dl = require("./dl.js").StreamDl;
+const { StreamDl, getRadioMetadata } = require("./dl.js");
 const axios = require("axios");
 const LIST_URL = "https://www.adblockradio.com/models/list.json";
 const DL_DURATION = 5; // in seconds
@@ -51,6 +53,8 @@ if (paramIndex >= 0 && process.argv.length >= paramIndex + 2) {
 
 			(function() { //test(country, name) {
 
+				let gRMError = false;
+				let gRMResult = null;
 				let metadataReceived = null;
 				let bitrate = 0;
 				let headersReceived = false;
@@ -66,8 +70,12 @@ if (paramIndex >= 0 && process.argv.length >= paramIndex + 2) {
 					this.timeout(1000 * (DL_DURATION + 1));
 					log.info("testing dl for radio " + country + "_" + name);
 
-					//return new Promise(function(resolve, reject) {
-					dl = new Dl({ country: country, name: name, segDuration: SEG_DURATION });
+					getRadioMetadata(country, name, function(err, result) {
+						gRMError = !!err;
+						gRMResult = result;
+					});
+
+					dl = new StreamDl({ country: country, name: name, segDuration: SEG_DURATION });
 
 					dl.on("metadata", function(data) {
 						log.info("metadata received\n" + JSON.stringify(data, null, "\t"));
@@ -117,6 +125,8 @@ if (paramIndex >= 0 && process.argv.length >= paramIndex + 2) {
 					});
 
 					it('should have received metadata', function() {
+						assert.equal(gRMError, false);
+						assert(gRMResult);
 						assert(metadataReceived);
 						assert(metadataReceived.country);
 						assert(metadataReceived.name);
@@ -169,9 +179,7 @@ if (paramIndex >= 0 && process.argv.length >= paramIndex + 2) {
 					});
 
 					it('should stop properly', function() {
-						assert(dl.toBeDestroyed);
-						assert.equal(dl.req, undefined);
-						assert.equal(dl.altreq, undefined);
+						assert(!dl.worker);
 					});
 
 				});
