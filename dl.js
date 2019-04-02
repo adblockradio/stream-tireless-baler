@@ -22,19 +22,10 @@
 
 "use strict";
 
-// TODO
-//
-// ensuring that exactly one network request is active across all the callbacks
-// is a nightmare.
-// idea: child_process.fork() and kill the child_process when the request fails.
-// or do it with a worker thread. https://nodejs.org/api/worker_threads.html
-
-
 const { Readable } = require('stream');
 const { log } = require("abr-log")("dl");
 const axios = require('axios');
-const { Worker } = require('worker_threads');
-
+const cp = require("child_process");
 
 const consts = {
 	SUPPORTED_EXTENSIONS: [
@@ -109,33 +100,48 @@ class StreamDl extends Readable {
 		this.segDuration = options.segDuration;
 		this.buffer = 0;
 
-		var self = this;
-		getRadioMetadata(this.country, this.name, function(err, result) {
-			if (err || !result) {
-				log.warn(self.canonical + " problem fetching radio info: " + err);
-				return self.emit("error", "problem fetching radio info: " + err);
+
+		this.startDl();
+	}
+
+	async refreshMetadata() {
+		const self = this;
+		return new Promise(function(resolve, reject) {
+			try {
+				getRadioMetadata(self.country, self.name, function(err, result) {
+					if (err || !result) {
+						log.warn(self.canonical + " problem fetching radio info: " + err);
+						self.emit("error", "problem fetching radio info: " + err);
+						return reject();
+					}
+					let translatedCodec = consts.CODEC_API_TRANSLATION[result.codec];
+					if (!consts.SUPPORTED_EXTENSIONS.includes(translatedCodec)) {
+						if (result.codec === "UNKNOWN" || result.codec === "") {
+							log.warn(self.canonical + ": API gives " + result.codec + " codec. Will use ffprobe to determine it.");
+							translatedCodec = "UNKNOWN";
+						} else {
+							log.error(self.canonical + ": API returned a codec, " + result.codec + ", that is not supported");
+							self.emit("error", "API returned an unsupported codec");
+							return reject();
+						}
+					} else if (!result.codec) {
+						log.warn(self.canonical + ": API returned an empty codec field");
+						self.emit("error", "API returned an empty codec")
+						return reject();
+					}
+					self.url = result.url;
+					self.origUrl = result.url;
+					self.ext = translatedCodec;
+					self.hls = result.codec === "HLS" || result.hls === "1";
+					self.bitrate = result.bitrate;
+					self.apiBitrate = result.bitrate;
+					self.apiresult = result;
+					resolve();
+				});
+			} catch (e) {
+				log.error(self.canonical + " error getting radio metadata. err=" + e);
+				reject();
 			}
-			let translatedCodec = consts.CODEC_API_TRANSLATION[result.codec];
-			if (!consts.SUPPORTED_EXTENSIONS.includes(translatedCodec)) {
-				if (result.codec === "UNKNOWN" || result.codec === "") {
-					log.warn(self.canonical + ": API gives " + result.codec + " codec. Will use ffprobe to determine it.");
-					translatedCodec = "UNKNOWN";
-				} else {
-					log.error(self.canonical + ": API returned a codec, " + result.codec + ", that is not supported");
-					return self.emit("error", "API returned an unsupported codec");
-				}
-			} else if (!result.codec) {
-				log.warn(self.canonical + ": API returned an empty codec field");
-				return self.emit("error", "API returned an empty codec")
-			}
-			self.url = result.url;
-			self.origUrl = result.url;
-			self.ext = translatedCodec;
-			self.hls = result.codec === "HLS" || result.hls === "1";
-			self.bitrate = result.bitrate;
-			self.apiBitrate = result.bitrate;
-			self.apiresult = result;
-			self.startDl(null);
 		});
 	}
 
@@ -150,21 +156,30 @@ class StreamDl extends Readable {
 			self.receivedBytes = 0;
 			self.receivedBytesInCurrentSegment = 0;
 
-			self.worker = new Worker(__dirname + "/worker.js", {
-				workerData: {
+			self.checkInterval = setInterval(function() {
+				if (+new Date() - self.lastData > 10000) {
+					log.info(self.canonical + " stream seems idle, we restart it");
+					self.startDl();
+				}
+			}, 5000);
+
+			try {
+				await self.refreshMetadata();
+			} catch (e) {
+				return;
+			}
+
+			self.worker = cp.fork(__dirname + "/worker.js", { //new Worker(__dirname + "/worker.js", {
+				//workerData: {
+				env: {
 					country: self.country,
 					name: self.name,
 					url: self.url,
 					hls: self.hls,
 					ext: self.ext,
 					bitrate: self.bitrate,
-					consts: consts,
+					consts: JSON.stringify(consts),
 				}
-			});
-
-
-			self.worker.once("online", function() {
-				log.debug(self.canonical + " thread is online");
 			});
 
 			self.worker.on("message", function(msg) {
@@ -189,6 +204,7 @@ class StreamDl extends Readable {
 					});
 
 				} else if (msg.type === "data") {
+					msg.data = Buffer.from(msg.data);
 					log.debug(self.canonical + " received " + msg.data.length + " bytes");
 					self.onData2(msg.data, msg.isFirstSegment);
 
@@ -219,14 +235,8 @@ class StreamDl extends Readable {
 			self.worker.exited = false;
 			self.worker.once("exit", function() {
 				log.debug(self.canonical + " thread exited");
+				self.worker = null;
 			});
-
-			self.checkInterval = setInterval(function() {
-				if (+new Date() - self.lastData > 10000) {
-					log.info(self.canonical + " stream seems idle, we restart it");
-					self.startDl();
-				}
-			}, 5000);
 		})();
 
 	}
@@ -252,21 +262,6 @@ class StreamDl extends Readable {
 		const limitBytes = this.segDuration * this.bitrate;
 
 		if (!limitBytes || this.receivedBytesInCurrentSegment + data.length < limitBytes) {
-
-			// TODO BUG
-			/*
-			.../stream-tireless-baler/dl.js:411
-			if (!limitBytes || this.receivedBytesInCurrentSegment + data.length < limitBytes) {
-			                                                             ^
-
-			TypeError: Cannot read property 'length' of undefined
-				at StreamDl.onData2 (.../stream-tireless-baler/dl.js:411:64)
-				at done (.../stream-tireless-baler/dl.js:349:9)
-				at Socket.<anonymous> (.../stream-tireless-baler/dl.js:391:11)
-				at Socket.emit (events.js:187:15)
-				at endReadableNT (_stream_readable.js:1094:12)
-				at process._tickCallback (internal/process/next_tick.js:63:19)
-			*/
 
 			this.receivedBytesInCurrentSegment += data.length;
 			this.receivedBytes += data.length;
@@ -302,29 +297,9 @@ class StreamDl extends Readable {
 			clearInterval(this.checkInterval); // disable safety nets that restart the dl
 		}
 		if (this.worker) {
-			const self = this;
-			await new Promise(function(resolve, reject) {
-				self.worker.postMessage({
-					type: 'stop'
-				});
-				self.worker.once("exit", function(err) {
-					if (self.worker.exited) log.warn("worker already had the 'exited' flag!");
-					self.worker.exited = true;
-					self.worker.unref();
-					resolve();
-				});
-			});
+			this.worker.kill();
+			delete this.worker;
 		}
-		/*if (this.req && this.req.abort) {
-			this.req.abort();
-			log.debug(this.canonical + " http request aborted on demand");
-			delete this.req;
-		}
-		if (this.altreq && this.altreq.kill) {
-			this.altreq.kill();
-			log.debug(this.canonical + " curl child process killed");
-			delete this.altreq;
-		}*/
 	}
 
 	_read() {

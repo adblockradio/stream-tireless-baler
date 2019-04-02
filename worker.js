@@ -1,6 +1,5 @@
 "use strict";
 const { log } = require("abr-log")("dl/worker");
-const { parentPort, workerData } = require('worker_threads');
 const Url = require("url");
 const m3u8handler = require("./m3u8handler.js");
 const http = require("http");
@@ -8,48 +7,29 @@ const https = require("https");
 const cp = require('child_process');
 const assert = require("assert");
 
-assert(workerData.country);
-assert(workerData.name);
-assert(workerData.url);
-assert(workerData.ext); // to remove in the end?
-assert(!isNaN(workerData.bitrate));
-assert([true, false].includes(workerData.hls));
-assert(workerData.consts);
+const { country, name } = process.env; //workerData;
+let { url, ext, bitrate, hls, consts } = process.env; //workerData;
 
-const { country, name, hls, consts } = workerData;
-let { url, ext, bitrate } = workerData;
+// IPC seems only to support strings. Convert back
+bitrate = parseInt(bitrate);
+if (hls === "false") hls = false;
+if (hls === "true") hls = true;
+consts = JSON.parse(consts);
+
+assert(country);
+assert(name);
+assert(url);
+assert(ext); // to remove in the end?
+assert(!isNaN(bitrate));
+assert([true, false].includes(hls));
+assert(consts);
+assert(process.send);
+
 const canonical = country + "_" + name;
 
 log.info("dl worker spawned for radio " + canonical);
 
 log.debug(canonical + " start dl url= " + url + " ext " + ext + " bitrate expected to be " + bitrate);
-/*if (this.date && timestamp && timestamp != this.date) {
-	log.debug(this.canonical + " startDl has been called with the wrong timestamp, abort. current=" + timestamp + " official=" + this.date);
-	return;
-}*/
-
-parentPort.on("message", function(msg) {
-	if (msg.type === 'stop') {
-		if (altreq && altreq.kill) {
-			altreq.kill();
-			log.debug(canonical + " curl child process stopped");
-		}
-		if (req) {
-			log.info(canonical + " stop request");
-
-			//this.toBeDestroyed = true;
-			req.abort();
-			/*this.res.once('close', function() {
-				this.req = null;
-				log.info("now ready to start it again, baby!");
-				self.req = null;
-				self.toBeDestroyed = false;
-				self.startDl(timestamp);
-			});*/
-		}
-		parentPort.unref(); // thread will eventually terminate
-	}
-});
 
 let req = null;
 let altreq = null;
@@ -59,14 +39,12 @@ let ffprobeDone = false; // boolean to indicate that ffprobe bitrate has already
 let ffprobeBuffer = null;
 let hlsKnownBitrate = false;
 
-//setTimeout(function() { self.checkAlive(self.date); }, 5000);
-
 const urlParsed = Url.parse(url);
 
 if (hls) {
 	// special handler for HLS streams
 	req = m3u8handler(urlParsed, function(headers) {
-		parentPort.postMessage({
+		process.send({
 			type: "headers",
 			headers: headers,
 		});
@@ -76,11 +54,10 @@ if (hls) {
 			log.debug(canonical + " overwrite the original bitrate " + bitrate + " bytes / s");
 		}
 		bitrate = _bitrate;
-		parentPort.postMessage({
+		process.send({
 			type: "bitrate",
 			bitrate: bitrate,
 		});
-		//self.hlsBitrate = bitrate;
 		hlsKnownBitrate = true; // useless to call ffprobe if the bitrate is known reliably
 	}, function(data, delay) {
 		// hls blocks may provide data in too big blocks. inject it progressively in the analysis flow
@@ -92,7 +69,7 @@ if (hls) {
 	req = (urlParsed.protocol == "http:" ? http : https).get(urlParsed, function (_res) {
 		res = _res;
 		log.debug(canonical + " got response code " + res.statusCode + " and content-type " + res.headers["content-type"]);
-		parentPort.postMessage({
+		process.send({
 			type: "headers",
 			headers: res.headers,
 		});
@@ -113,7 +90,7 @@ if (hls) {
 			// "location":"http://185.52.127.132/fr/30001/mp3_128.mp3","content-length":"0","date":"Wed, 13 Jul 2016 08:08:09 GMT","connection":"close"}
 			url = res.headers.location;
 			log.info(canonical + " following redirection to " + url);
-			parentPort.postMessage({
+			process.send({
 				type: "url",
 				url: url,
 			});
@@ -162,8 +139,7 @@ if (hls) {
 				}
 
 				if (newUrlFound) {
-					//startDl(null)
-					parentPort.postMessage({
+					process.send({
 						type: "url",
 						url: url,
 					});
@@ -177,22 +153,13 @@ if (hls) {
 
 		} else if (res.statusCode != 200) {
 			throw new Error("HTTP NOT 200");
-			// restart 2000
 
 		} else { // case of success
 			res.on('data', onData);
 
 			res.on('close', function() {
 				log.info(canonical + " server response has been closed");
-				//throw new Error("HTTP CLOSE");
-
-				/*if (toBeDestroyed) {
-					log.info(canonical + " server response has been closed (on demand)");
-				} else {
-					log.warn(canonical + " server response has been unexpectedly closed.");
-					// restart 5000
-				}*/
-
+				throw new Error("HTTP CLOSE");
 			});
 		}
 	});
@@ -200,45 +167,19 @@ if (hls) {
 	req.on('error', function(e) {
 		if (e.message == "Parse Error") {
 			// node is unable to download HTTP data without headers.
-			log.info(canonical + ' seems to follow HTTP/0.9 spec. retry with curl');
+			log.info(canonical + ' seems to follow HTTP/0.9 spec. no headers. retry with curl');
+			process.send({
+				type: "headers",
+				headers: {},
+			});
 			altreq = cp.spawn("curl", ["-L", url], { stdio: ['pipe', 'pipe', 'pipe'] });
 			return altreq.stdout.on("data", onData);
 		}
 
 		log.error(canonical + ' problem with request: ' + e.message);
 		throw new Error();
-
-		/*(function(timestamp) {
-			setTimeout(function() {
-				getRadioMetadata(self.country, self.name, function(err, result) {
-					if (err) {
-						log.warn(self.canonical + " problem fetching radio info: " + err);
-					}
-
-					// URL has been updated in the metadata database
-					if (result != null && self.url != result.url) {
-						log.warn(self.canonical + " URL updated from " + self.url + " to " + result.url);
-						log.warn(self.canonical + " original url was " + self.origUrl);
-						self.url = result.url;
-						self.origUrl = result.url;
-						if (result.bitrate) {
-							bitrate = result.bitrate;
-							parentPort.postMessage({
-								type: "bitrate",
-								bitrate: bitrate,
-							});
-						}
-					}
-					self.startDl(timestamp);
-				});
-			}, 5000);
-		})(self.date);*/
 	});
-
-
 }
-
-
 
 
 // get a reliable value of bitrate, so that tBuffer can be correctly estimated
@@ -246,7 +187,7 @@ if (hls) {
 const onData = function(data) {
 
 	if (ffprobeDone) {
-		return parentPort.postMessage({
+		return process.send({
 			type: 'data',
 			data: data,
 			isFirstSegment: false
@@ -261,11 +202,11 @@ const onData = function(data) {
 
 	const done = function() {
 		ffprobeDone = true; // will not do ffprobe bitrate detection in the future
-		parentPort.postMessage({
+		process.send({
 			type: 'metadata',
 		});
 
-		parentPort.postMessage({
+		process.send({
 			type: 'data',
 			data: ffprobeBuffer,
 			isFirstSegment: true,
@@ -308,11 +249,10 @@ const onData = function(data) {
 		} else {
 			const ffprobeBitrate = Number(linesplit[i]) * 1000 / 8;
 			log.info(canonical + " ffprobe bitrate = " + ffprobeBitrate + " bytes/s");
-			//self.ffprobeBitrate = ffprobeBitrate;
 			if (!bitrate) {
 				log.debug(canonical + " use that one");
 				bitrate = ffprobeBitrate;
-				parentPort.postMessage({
+				process.send({
 					type: "bitrate",
 					bitrate: bitrate,
 				});
@@ -328,7 +268,7 @@ const onData = function(data) {
 		} else {
 			let codec = linesplit[j].split(',')[0]; // remove trailing comma, if any. With HLS streams, one may get: "Audio: aac (HE-AAC) ([15][0][0][0] / 0x000F),"
 			ext = consts.CODEC_FFPROBE_TRANSLATION[codec];
-			parentPort.postMessage({
+			process.send({
 				type: "ext",
 				ext: ext,
 			});
