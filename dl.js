@@ -205,7 +205,7 @@ class StreamDl extends Readable {
 
 				} else if (msg.type === "data") {
 					msg.data = Buffer.from(msg.data);
-					log.debug(self.canonical + " received " + msg.data.length + " bytes");
+					//log.debug(self.canonical + " received " + msg.data.length + " bytes");
 					self.onData2(msg.data, msg.isFirstSegment);
 
 				} else if (msg.type === "bitrate") {

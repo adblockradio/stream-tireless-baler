@@ -1,6 +1,6 @@
 {
   "name": "stream-tireless-baler",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "description": "Universal and failsafe radio stream downloader as a Node Readable module",
   "main": "dl.js",
   "dependencies": {
