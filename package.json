@@ -1,15 +1,15 @@
 {
   "name": "stream-tireless-baler",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "Universal and failsafe radio stream downloader as a Node Readable module",
   "main": "dl.js",
   "dependencies": {
-    "abr-log": "^1.0.2",
+    "abr-log": "^1.0.3",
     "m3u8": "^0.0.7"
   },
   "devDependencies": {
-    "axios": "^0.18.0",
-    "mocha": "^6.0.0"
+    "axios": "^0.18.1",
+    "mocha": "^6.2.1"
   },
   "scripts": {
     "test": "mocha test.js --delay"

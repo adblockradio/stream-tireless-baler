@@ -25,7 +25,7 @@
 const { log } = require("abr-log")("dldemo");
 const Dl = require("./dl.js").StreamDl;
 
-const dl = new Dl({ country: "France", name: "Radio Nova", segDuration: 2 });
+const dl = new Dl({ country: "United States of America", name: "Dogglounge", segDuration: 2 });
 
 dl.on("metadata", function(data) {
 	log.info("metadata received\n" + JSON.stringify(data, null, "\t"));
@@ -50,7 +50,7 @@ dl.on("error", function(err) {
 	log.warn("dl err=" + err);
 });
 
-setTimeout(function() {
-	log.info("stopping stream download.");
-	dl.stopDl();
-}, 6000);
+//setTimeout(function() {
+//	log.info("stopping stream download.");
+//	dl.stopDl();
+//}, 6000);

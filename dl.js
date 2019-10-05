@@ -45,26 +45,40 @@ const consts = {
 		"OGG": "ogg",
 		"HLS": "aac"
 	},
-	API_PATH: "http://www.radio-browser.info/webservice/json/stations/bynameexact/"
+	API_PATH: "https://www.adblockradio.com/models/list.json",
+	API_PATH_ALT: "https://www.radio-browser.info/webservice/json/stations/bynameexact/",
 }
 
-// function that calls an API to get metadata about a radio
+// function that calls an API to get metadata about a radio (provider adblockradio.com)
 const getRadioMetadata = function(country, name, callback) {
+	axios.get(consts.API_PATH).then(function(response) {
+		const result = response.data.find(radio => radio.country === country && radio.name === name);
+		if (result) {
+			if (isFinite(result.bitrate) && result.bitrate > 0) {
+				result.bitrate *= 1000 / 8; // result in kbps. convert to bytes per second
+			} else {
+				result.bitrate = 0;
+				log.warn(country + "_" + name + " getRadioMetadata: no ICY bitrate available");
+				// we will use ffprobe instead, or read the HLS manifest if relevant
+			}
+			return callback(null, result);
+		} else {
+			log.warn("getRadioMetadata: will try to find radio " + country + "_" + name + " on alt provider");
+			return getRadioMetadataAlt(country, name, callback);
+		}
+	}).catch(function(e) {
+		log.warn("getRadioMetadata: error " + e + " will try to find radio " + country + "_" + name + " on alt provider");
+		return getRadioMetadataAlt(country, name, callback);
+	});
+}
 
-	axios.get(consts.API_PATH + encodeURIComponent(name)).then(function(response) {
-
-		//try {
-		var results = response.data;
-		var i = results.map(e => e.country).indexOf(country);
-		/*} catch (e) {
-			log.error("getRadioMetadata: problem parsing response. err=" + e);
-			return callback(e, null);
-		}*/
-
+// function that calls an API to get metadata about a radio (provider radio-browser.info)
+const getRadioMetadataAlt = function(country, name, callback) {
+	axios.get(consts.API_PATH_ALT + encodeURIComponent(name)).then(function(response) {
+		const results = response.data;
+		const i = results.map(e => e.country).indexOf(country);
 		if (i >= 0) {
-			//log.info("getRadioMetadata: metadata received for " + country + "_" + name);
-			//log.debug("getRadioMetadata: metadata=" + JSON.stringify(results[i]));
-			if (!isNaN(results[i].bitrate) && results[i].bitrate > 0) {
+			if (isFinite(results[i].bitrate) && results[i].bitrate > 0) {
 				results[i].bitrate = results[i].bitrate * 1000 / 8; // result in kbps. convert to bytes per second
 			} else {
 				results[i].bitrate = 0;
@@ -77,7 +91,7 @@ const getRadioMetadata = function(country, name, callback) {
 			return callback(null, null);
 		}
 	}).catch(function(e) {
-		log.warn("getRatioMetadata: request error. err=" + e);
+		log.error("getRatioMetadata: request error. err=" + e);
 		return callback(e, null);
 	});
 }
@@ -132,7 +146,7 @@ class StreamDl extends Readable {
 					if (!self.url) self.url = result.url;
 					self.origUrl = result.url;
 					self.ext = translatedCodec;
-					self.hls = result.codec === "HLS" || result.hls === "1";
+					self.hls = result.codec === "HLS" || result.hls === "1" || result.hls === 1;
 					self.bitrate = result.bitrate;
 					self.apiBitrate = result.bitrate;
 					self.apiresult = result;

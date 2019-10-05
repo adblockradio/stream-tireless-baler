@@ -15,12 +15,11 @@ let radios = [
 	{ country: "France", name: "BFM Business" },          // stream with many redirections
 	{ country: "Spain", name: "Cadena 100" },
 	{ country: "Spain", name: "RAC1" },                   // HTTP/0.9 stream
-	{ country: "Italy", name: "Radio Capital" },          // HLS stream
+	{ country: "United States of America", name: "WKGR 98.7 The Gator - Palm Beach Rock - HLS stream" }, // Another HLS stream
 	{ country: "Belgium", name: "Zen FM" },               // audio/x-scpls playlist parsed to find the final URL
-	{ country: "Switzerland", name: "Basspistol (OGG)" }, // OGG stream
+	{ country: "United States of America", name: "AI Radio [128 KBPS OGG]" }, // OGG stream
 	{ country: "Italy", name: "RTL 102.5" },
 	{ country: "New Zealand", name: "Radio Hauraki" },    // low bitrate, ffprobe is often wrong
-	{ country: "United States of America", name: "NPR Program" }, // Another HLS stream
 ];
 
 const TEST_ALL_RADIOS = process.argv.includes("--test-all-radios");
@@ -135,9 +134,7 @@ if (paramIndex >= 0 && process.argv.length >= paramIndex + 2) {
 						assert(metadataReceived.ext);
 						assert(SUPPORTED_EXTENSIONS.includes(metadataReceived.ext));
 						assert(metadataReceived.bitrate);
-						assert(metadataReceived.hls); // "0" or "1", strings, so should be trueish
-						assert(metadataReceived.votes);
-						assert(metadataReceived.lastcheckok);
+						assert(metadataReceived.hls !== undefined);
 					});
 
 					it('should have received headers', function() {
@@ -150,7 +147,7 @@ if (paramIndex >= 0 && process.argv.length >= paramIndex + 2) {
 					});
 
 					it('should have a valid bitrate', function() {
-						assert(bitrate >= 3000 && bitrate <= 100000);
+						assert(bitrate >= 3000 && bitrate <= 100000, 'Incorrect bitrate at ' + bitrate);
 
 						// there are sometimes discrepancies in the ffprobe bitrate vs that reported by the API
 						// e.g. VBR streams.
@@ -166,7 +163,7 @@ if (paramIndex >= 0 && process.argv.length >= paramIndex + 2) {
 					});
 
 					it('should have a valid buffer duration', function() {
-						assert(tBuffer > 0 && tBuffer < 60);
+						assert(tBuffer > 0 && tBuffer < 60, 'Incorrect tBuffer at ' + tBuffer);
 						assert(receivedBytes/bitrate >= tBuffer);
 						assert(receivedBytes/bitrate < tBuffer + DL_DURATION);
 					});
