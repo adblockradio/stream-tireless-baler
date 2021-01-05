@@ -8,7 +8,7 @@
     "m3u8": "^0.0.7"
   },
   "devDependencies": {
-    "axios": "^0.18.1",
+    "axios": "^0.21.1",
     "mocha": "^6.2.1"
   },
   "scripts": {
